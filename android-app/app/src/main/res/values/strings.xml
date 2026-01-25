@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PDF Soru Çıkarıcı</string>
+    <string name="select_pdf">PDF Seç</string>
+    <string name="detect_questions">Soruları Tespit Et</string>
+    <string name="save_all">Tümünü Kaydet</string>
+    <string name="save_selected">Seçilenleri Kaydet</string>
+    <string name="processing">İşleniyor...</string>
+    <string name="detecting_questions">Sorular tespit ediliyor...</string>
+    <string name="no_pdf_selected">Henüz PDF seçilmedi</string>
+    <string name="questions_found">%d soru bulundu</string>
+    <string name="question_number">Soru %d</string>
+    <string name="page_number">Sayfa %d</string>
+    <string name="total_pages">Toplam %d sayfa</string>
+    <string name="saved_successfully">Başarıyla kaydedildi</string>
+    <string name="save_failed">Kaydetme başarısız</string>
+    <string name="permission_required">İzin gerekli</string>
+    <string name="storage_permission_message">Dosyaları kaydetmek için depolama izni gerekli</string>
+    <string name="grant_permission">İzin Ver</string>
+    <string name="cancel">İptal</string>
+    <string name="ok">Tamam</string>
+    <string name="select_all">Tümünü Seç</string>
+    <string name="deselect_all">Seçimi Kaldır</string>
+    <string name="analyzing_page">Sayfa %d analiz ediliyor...</string>
+    <string name="export_quality">Dışa Aktarma Kalitesi</string>
+    <string name="high_quality">Yüksek Kalite</string>
+    <string name="medium_quality">Orta Kalite</string>
+    <string name="low_quality">Düşük Kalite</string>
+    <string name="preview">Önizleme</string>
+    <string name="download">İndir</string>
+    <string name="share">Paylaş</string>
+    <string name="how_to_use">Nasıl Kullanılır</string>
+    <string name="instructions">1. PDF dosyası seçin\n2. \"Soruları Tespit Et\" butonuna tıklayın\n3. Yapay zeka soruları otomatik olarak algılayacak\n4. İstediğiniz soruları seçin\n5. JPEG olarak indirin</string>
+</resources>
