@@ -15,10 +15,11 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.math.abs
 
 /**
  * Detects questions in PDF page images using ML Kit text recognition
- * Improved algorithm: Detects from question number to the end of option D
+ * Supports both single-column and multi-column layouts
  */
 class QuestionDetector(
     private val config: DetectionConfig = DetectionConfig()
@@ -34,19 +35,18 @@ class QuestionDetector(
 
     // Patterns for options (A, B, C, D, E)
     private val optionPatterns = listOf(
-        Regex("^\\s*[A-E]\\s*[.)]\\s*", RegexOption.IGNORE_CASE),  // A) or A.
-        Regex("^\\s*[A-E]\\s*-\\s*", RegexOption.IGNORE_CASE)      // A -
+        Regex("^\\s*[A-E]\\s*[.)]", RegexOption.IGNORE_CASE),
+        Regex("^\\s*[A-E]\\s*-", RegexOption.IGNORE_CASE),
+        Regex("[A-E]\\)", RegexOption.IGNORE_CASE)
     )
 
-    // Pattern specifically for last option (D or E)
+    // Pattern for last option (D or E)
     private val lastOptionPatterns = listOf(
         Regex("^\\s*[DE]\\s*[.)]", RegexOption.IGNORE_CASE),
-        Regex("^\\s*[DE]\\s*-", RegexOption.IGNORE_CASE)
+        Regex("^\\s*[DE]\\s*-", RegexOption.IGNORE_CASE),
+        Regex("[DE]\\)", RegexOption.IGNORE_CASE)
     )
 
-    /**
-     * Detects questions in a single page bitmap
-     */
     suspend fun detectQuestions(
         pageBitmap: Bitmap,
         pageNumber: Int,
@@ -76,40 +76,28 @@ class QuestionDetector(
         }
     }
 
-    /**
-     * Recognizes text in the bitmap using ML Kit
-     */
     private suspend fun recognizeText(bitmap: Bitmap): Text = suspendCancellableCoroutine { cont ->
         val image = InputImage.fromBitmap(bitmap, 0)
-
         textRecognizer.process(image)
-            .addOnSuccessListener { text ->
-                cont.resume(text)
-            }
-            .addOnFailureListener { e ->
-                cont.resumeWithException(e)
-            }
+            .addOnSuccessListener { cont.resume(it) }
+            .addOnFailureListener { cont.resumeWithException(it) }
     }
 
-    /**
-     * Finds question boundaries from recognized text
-     * Improved: Uses option D/E end position as question boundary
-     */
     private fun findQuestionBoundaries(text: Text, pageBitmap: Bitmap): List<QuestionBoundary> {
+        val pageWidth = pageBitmap.width
+        val pageHeight = pageBitmap.height
         val boundaries = mutableListOf<QuestionBoundary>()
 
-        // Collect all text elements with positions
+        // Collect all text elements
         val textElements = mutableListOf<TextElement>()
-
         for (block in text.textBlocks) {
             for (line in block.lines) {
                 val lineText = line.text.trim()
-                val boundingBox = line.boundingBox ?: continue
-
+                val box = line.boundingBox ?: continue
                 textElements.add(TextElement(
                     text = lineText,
-                    bounds = boundingBox,
-                    isQuestionStart = isQuestionStart(lineText),
+                    bounds = box,
+                    centerX = box.centerX(),
                     questionNumber = extractQuestionNumber(lineText),
                     isOption = isOption(lineText),
                     isLastOption = isLastOption(lineText)
@@ -117,92 +105,126 @@ class QuestionDetector(
             }
         }
 
-        // Sort by vertical position
-        textElements.sortBy { it.bounds.top }
-
         // Find question starts
-        val questionStarts = textElements.filter { it.isQuestionStart && it.questionNumber != null }
+        val questionStarts = textElements.filter { it.questionNumber != null }
+            .sortedWith(compareBy({ it.bounds.top }, { it.centerX }))
 
-        // For each question, find its boundary
+        if (questionStarts.isEmpty()) return emptyList()
+
+        // Detect if multi-column layout
+        val isMultiColumn = detectMultiColumn(questionStarts, pageWidth)
+        val columnDivider = pageWidth / 2
+
+        // Process each question
         for (i in questionStarts.indices) {
-            val currentQuestion = questionStarts[i]
-            val questionNumber = currentQuestion.questionNumber ?: continue
+            val current = questionStarts[i]
+            val questionNumber = current.questionNumber ?: continue
+            val isLeftColumn = current.centerX < columnDivider
 
-            val startY = currentQuestion.bounds.top - config.marginTop
+            // Determine the column bounds for this question
+            val columnLeft: Int
+            val columnRight: Int
 
-            // Find the end of this question
-            // Option 1: Find the last option (D or E) before the next question
-            // Option 2: If no options found, use the next question start
-
-            val nextQuestionStartY = if (i < questionStarts.size - 1) {
-                questionStarts[i + 1].bounds.top
+            if (isMultiColumn) {
+                if (isLeftColumn) {
+                    columnLeft = 0
+                    columnRight = columnDivider
+                } else {
+                    columnLeft = columnDivider
+                    columnRight = pageWidth
+                }
             } else {
-                pageBitmap.height
+                columnLeft = 0
+                columnRight = pageWidth
             }
 
-            // Find all elements between this question and the next
-            val questionElements = textElements.filter {
-                it.bounds.top >= currentQuestion.bounds.top &&
-                it.bounds.top < nextQuestionStartY
+            // Find elements in the same column
+            val columnElements = textElements.filter {
+                it.centerX >= columnLeft && it.centerX < columnRight
             }
 
-            // Find the last option (D or E) in this question's range
-            val lastOptionElement = questionElements
+            // Find next question in the same column
+            val nextInColumn = questionStarts
+                .filter { it.questionNumber != questionNumber }
+                .filter { if (isMultiColumn) (it.centerX < columnDivider) == isLeftColumn else true }
+                .filter { it.bounds.top > current.bounds.top }
+                .minByOrNull { it.bounds.top }
+
+            val maxY = nextInColumn?.bounds?.top?.minus(10) ?: pageHeight
+
+            // Find elements belonging to this question (same column, between this and next)
+            val questionElements = columnElements.filter {
+                it.bounds.top >= current.bounds.top - 5 &&
+                it.bounds.top < maxY
+            }
+
+            // Find the last option (D or E)
+            val lastOption = questionElements
                 .filter { it.isLastOption }
                 .maxByOrNull { it.bounds.bottom }
 
-            // If we found a last option, use its bottom as the end
-            // Otherwise, find any option and use the last one
-            val endY = when {
-                lastOptionElement != null -> {
-                    lastOptionElement.bounds.bottom + config.marginBottom + 20
-                }
-                else -> {
-                    // Find the last option of any kind
-                    val anyLastOption = questionElements
-                        .filter { it.isOption }
-                        .maxByOrNull { it.bounds.bottom }
+            // Find any option as fallback
+            val anyOption = questionElements
+                .filter { it.isOption }
+                .maxByOrNull { it.bounds.bottom }
 
-                    anyLastOption?.bounds?.bottom?.plus(config.marginBottom + 20)
-                        ?: (nextQuestionStartY - config.marginTop)
+            // Determine end Y position
+            val endY = when {
+                lastOption != null -> lastOption.bounds.bottom + 30
+                anyOption != null -> anyOption.bounds.bottom + 30
+                else -> {
+                    // Find the lowest element in this question's range
+                    questionElements.maxByOrNull { it.bounds.bottom }?.bounds?.bottom?.plus(20)
+                        ?: (maxY - 10)
                 }
             }
 
-            // Create the question boundary
-            val questionRect = Rect(
-                config.marginLeft,
-                maxOf(0, startY),
-                pageBitmap.width - config.marginRight,
-                minOf(pageBitmap.height, endY)
+            // Create boundary with column-aware width
+            val rect = Rect(
+                columnLeft + config.marginLeft,
+                maxOf(0, current.bounds.top - config.marginTop),
+                columnRight - config.marginRight,
+                minOf(pageHeight, endY)
             )
 
-            // Validate the question height
-            val height = questionRect.height()
-            if (height >= config.minQuestionHeight && height <= config.maxQuestionHeight) {
-                boundaries.add(
-                    QuestionBoundary(
-                        questionNumber = questionNumber,
-                        rect = questionRect,
-                        text = currentQuestion.text,
-                        confidence = if (lastOptionElement != null) 0.95f else 0.8f
-                    )
-                )
+            // Validate
+            if (rect.height() >= config.minQuestionHeight && rect.height() <= config.maxQuestionHeight) {
+                boundaries.add(QuestionBoundary(
+                    questionNumber = questionNumber,
+                    rect = rect,
+                    text = current.text,
+                    confidence = if (lastOption != null) 0.95f else 0.75f
+                ))
             }
         }
 
-        return boundaries
+        return boundaries.sortedBy { it.questionNumber }
     }
 
     /**
-     * Checks if the text starts a new question
+     * Detect if page has multi-column layout
      */
-    private fun isQuestionStart(text: String): Boolean {
-        return extractQuestionNumber(text) != null
+    private fun detectMultiColumn(questions: List<TextElement>, pageWidth: Int): Boolean {
+        if (questions.size < 2) return false
+
+        val midPoint = pageWidth / 2
+        val leftQuestions = questions.filter { it.centerX < midPoint }
+        val rightQuestions = questions.filter { it.centerX >= midPoint }
+
+        // If we have questions on both sides, it's likely multi-column
+        if (leftQuestions.isNotEmpty() && rightQuestions.isNotEmpty()) {
+            // Check if any questions are at similar Y positions (within 100px)
+            for (left in leftQuestions) {
+                for (right in rightQuestions) {
+                    if (abs(left.bounds.top - right.bounds.top) < 100) {
+                        return true
+                    }
+                }
+            }
+        }
+        return false
     }
 
-    /**
-     * Extracts question number from text
-     */
     private fun extractQuestionNumber(text: String): Int? {
         for (pattern in questionPatterns) {
             val match = pattern.find(text)
@@ -210,52 +232,34 @@ class QuestionDetector(
                 return match.groupValues[1].toIntOrNull()
             }
         }
-
-        // Fallback: simple number at start
-        val simpleMatch = Regex("^\\s*(\\d+)\\s*[.)]").find(text)
-        if (simpleMatch != null && simpleMatch.groupValues.size > 1) {
-            return simpleMatch.groupValues[1].toIntOrNull()
+        val simple = Regex("^\\s*(\\d+)\\s*[.)]").find(text)
+        if (simple != null && simple.groupValues.size > 1) {
+            return simple.groupValues[1].toIntOrNull()
         }
-
         return null
     }
 
-    /**
-     * Checks if text is an option (A, B, C, D, E)
-     */
     private fun isOption(text: String): Boolean {
         return optionPatterns.any { it.containsMatchIn(text) }
     }
 
-    /**
-     * Checks if text is the last option (D or E)
-     */
     private fun isLastOption(text: String): Boolean {
         return lastOptionPatterns.any { it.containsMatchIn(text) }
     }
 
-    /**
-     * Releases resources
-     */
     fun close() {
         textRecognizer.close()
     }
 
-    /**
-     * Data class for text element with metadata
-     */
     private data class TextElement(
         val text: String,
         val bounds: Rect,
-        val isQuestionStart: Boolean,
+        val centerX: Int,
         val questionNumber: Int?,
         val isOption: Boolean,
         val isLastOption: Boolean
     )
 
-    /**
-     * Data class for question boundary
-     */
     private data class QuestionBoundary(
         val questionNumber: Int,
         val rect: Rect,
