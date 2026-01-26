@@ -78,9 +78,11 @@ class QuestionDetector(
     }
 
     /**
-     * Step 1: Scan all lines and identify every line that begins with a question number
-     * Step 2: Assign each subsequent line to the current question until another question number is encountered
-     * Step 3: Create boundaries based on the Y positions of the grouped lines
+     * Multi-column aware question detection:
+     * Step 1: Detect if document has multiple columns based on X positions
+     * Step 2: Group text blocks by column
+     * Step 3: Process each column separately in reading order
+     * Step 4: Find questions within each column
      */
     private fun findQuestionBoundaries(text: Text, pageBitmap: Bitmap): List<QuestionBoundary> {
         val pageHeight = pageBitmap.height
@@ -104,66 +106,107 @@ class QuestionDetector(
             }
         }
 
-        // Sort lines by Y position (top to bottom), then by X (left to right)
-        allLines.sortWith(compareBy({ it.bounds.top }, { it.bounds.left }))
+        if (allLines.isEmpty()) return emptyList()
 
-        // Step 1: Find all question start positions
-        val questionStartIndices = allLines.indices.filter { allLines[it].isQuestionStart }
-
-        if (questionStartIndices.isEmpty()) {
-            return emptyList()
-        }
-
+        // Detect columns based on X center positions
+        val columns = detectColumns(allLines, pageWidth)
         val boundaries = mutableListOf<QuestionBoundary>()
 
-        // Step 2: Group lines for each question
-        for (i in questionStartIndices.indices) {
-            val startIdx = questionStartIndices[i]
-            val endIdx = if (i < questionStartIndices.size - 1) {
-                questionStartIndices[i + 1]
-            } else {
-                allLines.size
-            }
+        // Process each column separately
+        for (columnLines in columns) {
+            // Sort lines within column by Y position only
+            val sortedLines = columnLines.sortedBy { it.bounds.top }
 
-            // Get all lines belonging to this question
-            val questionLines = allLines.subList(startIdx, endIdx)
-            if (questionLines.isEmpty()) continue
+            // Find question starts within this column
+            val questionStartIndices = sortedLines.indices.filter { sortedLines[it].isQuestionStart }
 
-            val questionNumber = questionLines[0].questionNumber ?: continue
+            if (questionStartIndices.isEmpty()) continue
 
-            // Calculate the bounding rect for all lines in this question
-            val minTop = questionLines.minOf { it.bounds.top }
-            val maxBottom = questionLines.maxOf { it.bounds.bottom }
-            val minLeft = questionLines.minOf { it.bounds.left }
-            val maxRight = questionLines.maxOf { it.bounds.right }
+            // Group lines for each question in this column
+            for (i in questionStartIndices.indices) {
+                val startIdx = questionStartIndices[i]
+                val endIdx = if (i < questionStartIndices.size - 1) {
+                    questionStartIndices[i + 1]
+                } else {
+                    sortedLines.size
+                }
 
-            // Check if question has answer choices (for confidence scoring)
-            val hasAnswerChoices = questionLines.any { it.hasAnswerChoice }
+                val questionLines = sortedLines.subList(startIdx, endIdx)
+                if (questionLines.isEmpty()) continue
 
-            // Collect all text for this question
-            val allText = questionLines.joinToString("\n") { it.text }
+                val questionNumber = questionLines[0].questionNumber ?: continue
 
-            // Create boundary with some padding
-            val rect = Rect(
-                maxOf(0, minLeft - config.marginLeft),
-                maxOf(0, minTop - config.marginTop),
-                minOf(pageWidth, maxRight + config.marginRight),
-                minOf(pageHeight, maxBottom + config.marginBottom + 20)
-            )
+                // Calculate the bounding rect for all lines in this question
+                val minTop = questionLines.minOf { it.bounds.top }
+                val maxBottom = questionLines.maxOf { it.bounds.bottom }
+                val minLeft = questionLines.minOf { it.bounds.left }
+                val maxRight = questionLines.maxOf { it.bounds.right }
 
-            // Validate height
-            if (rect.height() >= config.minQuestionHeight) {
-                boundaries.add(QuestionBoundary(
-                    questionNumber = questionNumber,
-                    rect = rect,
-                    allText = allText,
-                    confidence = if (hasAnswerChoices) 0.95f else 0.7f,
-                    hasError = !hasAnswerChoices && !allText.contains("?")
-                ))
+                val hasAnswerChoices = questionLines.any { it.hasAnswerChoice }
+                val allText = questionLines.joinToString("\n") { it.text }
+
+                val rect = Rect(
+                    maxOf(0, minLeft - config.marginLeft),
+                    maxOf(0, minTop - config.marginTop),
+                    minOf(pageWidth, maxRight + config.marginRight),
+                    minOf(pageHeight, maxBottom + config.marginBottom + 20)
+                )
+
+                if (rect.height() >= config.minQuestionHeight) {
+                    boundaries.add(QuestionBoundary(
+                        questionNumber = questionNumber,
+                        rect = rect,
+                        allText = allText,
+                        confidence = if (hasAnswerChoices) 0.95f else 0.7f,
+                        hasError = !hasAnswerChoices && !allText.contains("?")
+                    ))
+                }
             }
         }
 
-        return boundaries.sortedBy { it.questionNumber }
+        // Sort by top position (reading order: top to bottom, left to right)
+        return boundaries.sortedWith(compareBy({ it.rect.top }, { it.rect.left }))
+    }
+
+    /**
+     * Detect columns by clustering text lines based on X center position.
+     * Returns a list of columns, each containing the lines in that column.
+     */
+    private fun detectColumns(lines: List<TextLine>, pageWidth: Int): List<List<TextLine>> {
+        if (lines.isEmpty()) return emptyList()
+
+        // Calculate X center for each line
+        val linesWithCenter = lines.map { line ->
+            val centerX = (line.bounds.left + line.bounds.right) / 2
+            Pair(line, centerX)
+        }
+
+        // Check if we have a two-column layout
+        // If most lines are clearly on left half or right half, it's two columns
+        val midPoint = pageWidth / 2
+        val leftLines = linesWithCenter.filter { it.second < midPoint - pageWidth * 0.1 }
+        val rightLines = linesWithCenter.filter { it.second > midPoint + pageWidth * 0.1 }
+        val centerLines = linesWithCenter.filter {
+            it.second >= midPoint - pageWidth * 0.1 && it.second <= midPoint + pageWidth * 0.1
+        }
+
+        // If we have significant lines on both sides and few in center, it's two columns
+        val isTwoColumn = leftLines.size >= 3 && rightLines.size >= 3 &&
+                          centerLines.size < (lines.size * 0.3)
+
+        return if (isTwoColumn) {
+            // Two column layout - separate left and right
+            val leftColumnLines = lines.filter {
+                (it.bounds.left + it.bounds.right) / 2 < midPoint
+            }
+            val rightColumnLines = lines.filter {
+                (it.bounds.left + it.bounds.right) / 2 >= midPoint
+            }
+            listOf(leftColumnLines, rightColumnLines).filter { it.isNotEmpty() }
+        } else {
+            // Single column - all lines together
+            listOf(lines)
+        }
     }
 
     /**
