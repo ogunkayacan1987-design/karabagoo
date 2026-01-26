@@ -58,9 +58,7 @@ dependencies {
     // ML Kit Text Recognition
     implementation("com.google.mlkit:text-recognition:16.0.0")
 
-    // PDF Rendering - PdfRenderer is built into Android
-    // Additional PDF library for better compatibility
-    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    // PDF Rendering - Using Android's built-in PdfRenderer
 
     // Image Processing
     implementation("androidx.exifinterface:exifinterface:1.3.7")

@@ -6,10 +6,6 @@ on:
       - main
       - master
       - 'claude/**'
-  pull_request:
-    branches:
-      - main
-      - master
   workflow_dispatch:
 
 jobs:
@@ -29,14 +25,6 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
-
       - name: Create local.properties
         working-directory: android-app
         run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
@@ -50,10 +38,12 @@ jobs:
 
       - name: Build Debug APK
         working-directory: android-app
-        run: ./gradlew assembleDebug --stacktrace
+        run: |
+          ./gradlew assembleDebug --stacktrace --debug 2>&1 | tail -500
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: PDF-Soru-Cikarici-APK
           path: android-app/app/build/outputs/apk/debug/*.apk
