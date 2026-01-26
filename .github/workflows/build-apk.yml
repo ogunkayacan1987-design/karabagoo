@@ -38,30 +38,19 @@ jobs:
 
       - name: Build Debug APK
         working-directory: android-app
-        continue-on-error: true
-        id: build
-        run: ./gradlew assembleDebug --stacktrace 2>&1 | tee build.log
+        run: ./gradlew assembleDebug --stacktrace
 
-      - name: Show build errors
-        if: steps.build.outcome == 'failure'
-        working-directory: android-app
+      - name: List build outputs
         run: |
-          echo "=== COMPILATION ERRORS ==="
-          grep -A5 "error:" build.log || echo "No specific errors found"
-          echo "=== LAST 100 LINES ==="
-          tail -100 build.log
-
-      - name: Find APK files
-        run: |
-          echo "Searching for APK files..."
-          find android-app -name "*.apk" -type f || echo "No APK files found"
+          echo "=== Listing build outputs ==="
+          ls -laR android-app/app/build/outputs/ || echo "No outputs folder"
+          echo "=== Finding all APK files ==="
+          find . -name "*.apk" -type f 2>/dev/null || echo "No APK found"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
-        if: always()
         with:
           name: PDF-Soru-Cikarici-APK
-          path: |
-            android-app/app/build/outputs/apk/**/*.apk
+          path: android-app/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
