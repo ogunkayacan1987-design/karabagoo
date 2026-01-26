@@ -2,7 +2,14 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ '*' ]
+    branches:
+      - main
+      - master
+      - 'claude/**'
+  pull_request:
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
 jobs:
@@ -10,7 +17,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -27,22 +35,26 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
 
-      - name: Setup Gradle Wrapper
+      - name: Create local.properties
         working-directory: android-app
-        run: |
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-          gradle wrapper --gradle-version 8.2 --distribution-type bin
+        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
 
-      - name: Build APK
+      - name: Generate Gradle Wrapper
         working-directory: android-app
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug --stacktrace --info
+        run: gradle wrapper --gradle-version 8.2
+
+      - name: Make gradlew executable
+        run: chmod +x android-app/gradlew
+
+      - name: Build Debug APK
+        working-directory: android-app
+        run: ./gradlew assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Soru-Cikarici
+          name: PDF-Soru-Cikarici-APK
           path: android-app/app/build/outputs/apk/debug/*.apk
+          retention-days: 30
