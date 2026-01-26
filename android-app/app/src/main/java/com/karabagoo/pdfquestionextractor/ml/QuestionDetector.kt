@@ -15,37 +15,31 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import kotlin.math.abs
 
 /**
- * Detects questions in PDF page images using ML Kit text recognition
- * Supports both single-column and multi-column layouts
+ * Document Question Segmentation Engine
+ *
+ * Detects and separates exam questions from OCR text.
+ * Relies ONLY on textual and semantic patterns.
+ * Does NOT rely on visual layout, spacing, columns, or image separation.
+ *
+ * Rules:
+ * - A question starts with a number followed by dot or parenthesis (1., 2., 15., 3))
+ * - A question includes: stem, explanations, tables, figure captions, all answer choices
+ * - A question ends immediately before the next question number appears
+ * - Never split based on whitespace, empty lines, or visual gaps
+ * - Never merge two different question numbers
  */
 class QuestionDetector(
     private val config: DetectionConfig = DetectionConfig()
 ) {
     private val textRecognizer: TextRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
-    // Patterns for question numbers
-    private val questionPatterns = listOf(
-        Regex("^\\s*(\\d+)\\s*[.)]\\s*"),           // 1. or 1)
-        Regex("^\\s*Soru\\s*(\\d+)", RegexOption.IGNORE_CASE),  // Soru 1
-        Regex("^\\s*S[.]?\\s*(\\d+)", RegexOption.IGNORE_CASE)  // S.1 or S 1
-    )
+    // Pattern for question numbers: 1. or 1) or 15. or 15)
+    private val questionNumberPattern = Regex("^\\s*(\\d+)\\s*[.)]")
 
-    // Patterns for options (A, B, C, D, E)
-    private val optionPatterns = listOf(
-        Regex("^\\s*[A-E]\\s*[.)]", RegexOption.IGNORE_CASE),
-        Regex("^\\s*[A-E]\\s*-", RegexOption.IGNORE_CASE),
-        Regex("[A-E]\\)", RegexOption.IGNORE_CASE)
-    )
-
-    // Pattern for last option (D or E)
-    private val lastOptionPatterns = listOf(
-        Regex("^\\s*[DE]\\s*[.)]", RegexOption.IGNORE_CASE),
-        Regex("^\\s*[DE]\\s*-", RegexOption.IGNORE_CASE),
-        Regex("[DE]\\)", RegexOption.IGNORE_CASE)
-    )
+    // Pattern for answer choices
+    private val answerChoicePattern = Regex("^\\s*[A-E]\\s*[.):]", RegexOption.IGNORE_CASE)
 
     suspend fun detectQuestions(
         pageBitmap: Bitmap,
@@ -66,7 +60,7 @@ class QuestionDetector(
                     boundingBox = boundary.rect,
                     bitmap = croppedBitmap,
                     isSelected = true,
-                    detectedText = boundary.text,
+                    detectedText = boundary.allText,
                     confidence = boundary.confidence
                 )
             }
@@ -83,117 +77,88 @@ class QuestionDetector(
             .addOnFailureListener { cont.resumeWithException(it) }
     }
 
+    /**
+     * Step 1: Scan all lines and identify every line that begins with a question number
+     * Step 2: Assign each subsequent line to the current question until another question number is encountered
+     * Step 3: Create boundaries based on the Y positions of the grouped lines
+     */
     private fun findQuestionBoundaries(text: Text, pageBitmap: Bitmap): List<QuestionBoundary> {
-        val pageWidth = pageBitmap.width
         val pageHeight = pageBitmap.height
-        val boundaries = mutableListOf<QuestionBoundary>()
+        val pageWidth = pageBitmap.width
 
-        // Collect all text elements
-        val textElements = mutableListOf<TextElement>()
+        // Collect all text lines with their positions
+        val allLines = mutableListOf<TextLine>()
+
         for (block in text.textBlocks) {
             for (line in block.lines) {
                 val lineText = line.text.trim()
                 val box = line.boundingBox ?: continue
-                textElements.add(TextElement(
+
+                allLines.add(TextLine(
                     text = lineText,
                     bounds = box,
-                    centerX = box.centerX(),
+                    isQuestionStart = isQuestionStart(lineText),
                     questionNumber = extractQuestionNumber(lineText),
-                    isOption = isOption(lineText),
-                    isLastOption = isLastOption(lineText)
+                    hasAnswerChoice = hasAnswerChoice(lineText)
                 ))
             }
         }
 
-        // Find question starts
-        val questionStarts = textElements.filter { it.questionNumber != null }
-            .sortedWith(compareBy({ it.bounds.top }, { it.centerX }))
+        // Sort lines by Y position (top to bottom), then by X (left to right)
+        allLines.sortWith(compareBy({ it.bounds.top }, { it.bounds.left }))
 
-        if (questionStarts.isEmpty()) return emptyList()
+        // Step 1: Find all question start positions
+        val questionStartIndices = allLines.indices.filter { allLines[it].isQuestionStart }
 
-        // Detect if multi-column layout
-        val isMultiColumn = detectMultiColumn(questionStarts, pageWidth)
-        val columnDivider = pageWidth / 2
+        if (questionStartIndices.isEmpty()) {
+            return emptyList()
+        }
 
-        // Process each question
-        for (i in questionStarts.indices) {
-            val current = questionStarts[i]
-            val questionNumber = current.questionNumber ?: continue
-            val isLeftColumn = current.centerX < columnDivider
+        val boundaries = mutableListOf<QuestionBoundary>()
 
-            // Determine the column bounds for this question
-            val columnLeft: Int
-            val columnRight: Int
-
-            if (isMultiColumn) {
-                if (isLeftColumn) {
-                    columnLeft = 0
-                    columnRight = columnDivider
-                } else {
-                    columnLeft = columnDivider
-                    columnRight = pageWidth
-                }
+        // Step 2: Group lines for each question
+        for (i in questionStartIndices.indices) {
+            val startIdx = questionStartIndices[i]
+            val endIdx = if (i < questionStartIndices.size - 1) {
+                questionStartIndices[i + 1]
             } else {
-                columnLeft = 0
-                columnRight = pageWidth
+                allLines.size
             }
 
-            // Find elements in the same column
-            val columnElements = textElements.filter {
-                it.centerX >= columnLeft && it.centerX < columnRight
-            }
+            // Get all lines belonging to this question
+            val questionLines = allLines.subList(startIdx, endIdx)
+            if (questionLines.isEmpty()) continue
 
-            // Find next question in the same column
-            val nextInColumn = questionStarts
-                .filter { it.questionNumber != questionNumber }
-                .filter { if (isMultiColumn) (it.centerX < columnDivider) == isLeftColumn else true }
-                .filter { it.bounds.top > current.bounds.top }
-                .minByOrNull { it.bounds.top }
+            val questionNumber = questionLines[0].questionNumber ?: continue
 
-            val maxY = nextInColumn?.bounds?.top?.minus(10) ?: pageHeight
+            // Calculate the bounding rect for all lines in this question
+            val minTop = questionLines.minOf { it.bounds.top }
+            val maxBottom = questionLines.maxOf { it.bounds.bottom }
+            val minLeft = questionLines.minOf { it.bounds.left }
+            val maxRight = questionLines.maxOf { it.bounds.right }
 
-            // Find elements belonging to this question (same column, between this and next)
-            val questionElements = columnElements.filter {
-                it.bounds.top >= current.bounds.top - 5 &&
-                it.bounds.top < maxY
-            }
+            // Check if question has answer choices (for confidence scoring)
+            val hasAnswerChoices = questionLines.any { it.hasAnswerChoice }
 
-            // Find the last option (D or E)
-            val lastOption = questionElements
-                .filter { it.isLastOption }
-                .maxByOrNull { it.bounds.bottom }
+            // Collect all text for this question
+            val allText = questionLines.joinToString("\n") { it.text }
 
-            // Find any option as fallback
-            val anyOption = questionElements
-                .filter { it.isOption }
-                .maxByOrNull { it.bounds.bottom }
-
-            // Determine end Y position
-            val endY = when {
-                lastOption != null -> lastOption.bounds.bottom + 30
-                anyOption != null -> anyOption.bounds.bottom + 30
-                else -> {
-                    // Find the lowest element in this question's range
-                    questionElements.maxByOrNull { it.bounds.bottom }?.bounds?.bottom?.plus(20)
-                        ?: (maxY - 10)
-                }
-            }
-
-            // Create boundary with column-aware width
+            // Create boundary with some padding
             val rect = Rect(
-                columnLeft + config.marginLeft,
-                maxOf(0, current.bounds.top - config.marginTop),
-                columnRight - config.marginRight,
-                minOf(pageHeight, endY)
+                maxOf(0, minLeft - config.marginLeft),
+                maxOf(0, minTop - config.marginTop),
+                minOf(pageWidth, maxRight + config.marginRight),
+                minOf(pageHeight, maxBottom + config.marginBottom + 20)
             )
 
-            // Validate
-            if (rect.height() >= config.minQuestionHeight && rect.height() <= config.maxQuestionHeight) {
+            // Validate height
+            if (rect.height() >= config.minQuestionHeight) {
                 boundaries.add(QuestionBoundary(
                     questionNumber = questionNumber,
                     rect = rect,
-                    text = current.text,
-                    confidence = if (lastOption != null) 0.95f else 0.75f
+                    allText = allText,
+                    confidence = if (hasAnswerChoices) 0.95f else 0.7f,
+                    hasError = !hasAnswerChoices && !allText.contains("?")
                 ))
             }
         }
@@ -202,68 +167,44 @@ class QuestionDetector(
     }
 
     /**
-     * Detect if page has multi-column layout
+     * Check if line starts with a question number (1., 2., 15., 3))
      */
-    private fun detectMultiColumn(questions: List<TextElement>, pageWidth: Int): Boolean {
-        if (questions.size < 2) return false
-
-        val midPoint = pageWidth / 2
-        val leftQuestions = questions.filter { it.centerX < midPoint }
-        val rightQuestions = questions.filter { it.centerX >= midPoint }
-
-        // If we have questions on both sides, it's likely multi-column
-        if (leftQuestions.isNotEmpty() && rightQuestions.isNotEmpty()) {
-            // Check if any questions are at similar Y positions (within 100px)
-            for (left in leftQuestions) {
-                for (right in rightQuestions) {
-                    if (abs(left.bounds.top - right.bounds.top) < 100) {
-                        return true
-                    }
-                }
-            }
-        }
-        return false
+    private fun isQuestionStart(text: String): Boolean {
+        return questionNumberPattern.containsMatchIn(text)
     }
 
+    /**
+     * Extract question number from text
+     */
     private fun extractQuestionNumber(text: String): Int? {
-        for (pattern in questionPatterns) {
-            val match = pattern.find(text)
-            if (match != null && match.groupValues.size > 1) {
-                return match.groupValues[1].toIntOrNull()
-            }
-        }
-        val simple = Regex("^\\s*(\\d+)\\s*[.)]").find(text)
-        if (simple != null && simple.groupValues.size > 1) {
-            return simple.groupValues[1].toIntOrNull()
-        }
-        return null
+        val match = questionNumberPattern.find(text)
+        return match?.groupValues?.getOrNull(1)?.toIntOrNull()
     }
 
-    private fun isOption(text: String): Boolean {
-        return optionPatterns.any { it.containsMatchIn(text) }
-    }
-
-    private fun isLastOption(text: String): Boolean {
-        return lastOptionPatterns.any { it.containsMatchIn(text) }
+    /**
+     * Check if line contains an answer choice (A), B), C), D), E))
+     */
+    private fun hasAnswerChoice(text: String): Boolean {
+        return answerChoicePattern.containsMatchIn(text)
     }
 
     fun close() {
         textRecognizer.close()
     }
 
-    private data class TextElement(
+    private data class TextLine(
         val text: String,
         val bounds: Rect,
-        val centerX: Int,
+        val isQuestionStart: Boolean,
         val questionNumber: Int?,
-        val isOption: Boolean,
-        val isLastOption: Boolean
+        val hasAnswerChoice: Boolean
     )
 
     private data class QuestionBoundary(
         val questionNumber: Int,
         val rect: Rect,
-        val text: String,
-        val confidence: Float
+        val allText: String,
+        val confidence: Float,
+        val hasError: Boolean = false
     )
 }
