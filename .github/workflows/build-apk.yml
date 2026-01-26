@@ -38,19 +38,20 @@ jobs:
 
       - name: Build Debug APK
         working-directory: android-app
-        run: ./gradlew assembleDebug --stacktrace
-
-      - name: List build outputs
+        id: build
         run: |
-          echo "=== Listing build outputs ==="
-          ls -laR android-app/app/build/outputs/ || echo "No outputs folder"
-          echo "=== Finding all APK files ==="
-          find . -name "*.apk" -type f 2>/dev/null || echo "No APK found"
+          ./gradlew assembleDebug 2>&1 | tee build_output.txt
+          BUILD_RESULT=${PIPESTATUS[0]}
+          echo "=== ERRORS FOUND ==="
+          grep -i "error" build_output.txt | head -50 || echo "No error keyword found"
+          echo "=== WARNINGS ==="
+          grep -i "warning" build_output.txt | head -20 || echo "No warnings"
+          exit $BUILD_RESULT
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: PDF-Soru-Cikarici-APK
           path: android-app/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
-          if-no-files-found: error
