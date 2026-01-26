@@ -18,11 +18,31 @@ import kotlin.coroutines.resumeWithException
 
 /**
  * Detects questions in PDF page images using ML Kit text recognition
+ * Improved algorithm: Detects from question number to the end of option D
  */
 class QuestionDetector(
     private val config: DetectionConfig = DetectionConfig()
 ) {
     private val textRecognizer: TextRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+
+    // Patterns for question numbers
+    private val questionPatterns = listOf(
+        Regex("^\\s*(\\d+)\\s*[.)]\\s*"),           // 1. or 1)
+        Regex("^\\s*Soru\\s*(\\d+)", RegexOption.IGNORE_CASE),  // Soru 1
+        Regex("^\\s*S[.]?\\s*(\\d+)", RegexOption.IGNORE_CASE)  // S.1 or S 1
+    )
+
+    // Patterns for options (A, B, C, D, E)
+    private val optionPatterns = listOf(
+        Regex("^\\s*[A-E]\\s*[.)]\\s*", RegexOption.IGNORE_CASE),  // A) or A.
+        Regex("^\\s*[A-E]\\s*-\\s*", RegexOption.IGNORE_CASE)      // A -
+    )
+
+    // Pattern specifically for last option (D or E)
+    private val lastOptionPatterns = listOf(
+        Regex("^\\s*[DE]\\s*[.)]", RegexOption.IGNORE_CASE),
+        Regex("^\\s*[DE]\\s*-", RegexOption.IGNORE_CASE)
+    )
 
     /**
      * Detects questions in a single page bitmap
@@ -73,51 +93,87 @@ class QuestionDetector(
 
     /**
      * Finds question boundaries from recognized text
+     * Improved: Uses option D/E end position as question boundary
      */
     private fun findQuestionBoundaries(text: Text, pageBitmap: Bitmap): List<QuestionBoundary> {
         val boundaries = mutableListOf<QuestionBoundary>()
-        val questionStarts = mutableListOf<QuestionStart>()
 
-        // Find all question start positions
+        // Collect all text elements with positions
+        val textElements = mutableListOf<TextElement>()
+
         for (block in text.textBlocks) {
             for (line in block.lines) {
                 val lineText = line.text.trim()
                 val boundingBox = line.boundingBox ?: continue
 
-                // Check if this line starts a question
-                val questionNumber = extractQuestionNumber(lineText)
-                if (questionNumber != null) {
-                    questionStarts.add(
-                        QuestionStart(
-                            questionNumber = questionNumber,
-                            topY = boundingBox.top,
-                            leftX = boundingBox.left,
-                            text = lineText,
-                            boundingBox = boundingBox
-                        )
-                    )
-                }
+                textElements.add(TextElement(
+                    text = lineText,
+                    bounds = boundingBox,
+                    isQuestionStart = isQuestionStart(lineText),
+                    questionNumber = extractQuestionNumber(lineText),
+                    isOption = isOption(lineText),
+                    isLastOption = isLastOption(lineText)
+                ))
             }
         }
 
         // Sort by vertical position
-        questionStarts.sortBy { it.topY }
+        textElements.sortBy { it.bounds.top }
 
-        // Create boundaries between consecutive questions
+        // Find question starts
+        val questionStarts = textElements.filter { it.isQuestionStart && it.questionNumber != null }
+
+        // For each question, find its boundary
         for (i in questionStarts.indices) {
-            val current = questionStarts[i]
-            val nextTopY = if (i < questionStarts.size - 1) {
-                questionStarts[i + 1].topY - config.marginTop
+            val currentQuestion = questionStarts[i]
+            val questionNumber = currentQuestion.questionNumber ?: continue
+
+            val startY = currentQuestion.bounds.top - config.marginTop
+
+            // Find the end of this question
+            // Option 1: Find the last option (D or E) before the next question
+            // Option 2: If no options found, use the next question start
+
+            val nextQuestionStartY = if (i < questionStarts.size - 1) {
+                questionStarts[i + 1].bounds.top
             } else {
-                pageBitmap.height - config.marginBottom
+                pageBitmap.height
             }
 
-            // Find the full width of this question area
+            // Find all elements between this question and the next
+            val questionElements = textElements.filter {
+                it.bounds.top >= currentQuestion.bounds.top &&
+                it.bounds.top < nextQuestionStartY
+            }
+
+            // Find the last option (D or E) in this question's range
+            val lastOptionElement = questionElements
+                .filter { it.isLastOption }
+                .maxByOrNull { it.bounds.bottom }
+
+            // If we found a last option, use its bottom as the end
+            // Otherwise, find any option and use the last one
+            val endY = when {
+                lastOptionElement != null -> {
+                    lastOptionElement.bounds.bottom + config.marginBottom + 20
+                }
+                else -> {
+                    // Find the last option of any kind
+                    val anyLastOption = questionElements
+                        .filter { it.isOption }
+                        .maxByOrNull { it.bounds.bottom }
+
+                    anyLastOption?.bounds?.bottom?.plus(config.marginBottom + 20)
+                        ?: (nextQuestionStartY - config.marginTop)
+                }
+            }
+
+            // Create the question boundary
             val questionRect = Rect(
                 config.marginLeft,
-                maxOf(0, current.topY - config.marginTop),
+                maxOf(0, startY),
                 pageBitmap.width - config.marginRight,
-                minOf(pageBitmap.height, nextTopY)
+                minOf(pageBitmap.height, endY)
             )
 
             // Validate the question height
@@ -125,10 +181,10 @@ class QuestionDetector(
             if (height >= config.minQuestionHeight && height <= config.maxQuestionHeight) {
                 boundaries.add(
                     QuestionBoundary(
-                        questionNumber = current.questionNumber,
+                        questionNumber = questionNumber,
                         rect = questionRect,
-                        text = current.text,
-                        confidence = 0.9f
+                        text = currentQuestion.text,
+                        confidence = if (lastOptionElement != null) 0.95f else 0.8f
                     )
                 )
             }
@@ -138,36 +194,44 @@ class QuestionDetector(
     }
 
     /**
-     * Extracts question number from text line
+     * Checks if the text starts a new question
+     */
+    private fun isQuestionStart(text: String): Boolean {
+        return extractQuestionNumber(text) != null
+    }
+
+    /**
+     * Extracts question number from text
      */
     private fun extractQuestionNumber(text: String): Int? {
-        // Try various patterns
-        for (pattern in config.questionPatterns) {
-            val match = pattern.find(text)
-            if (match != null) {
-                // Extract the number from the match
-                val numberMatch = Regex("\\d+").find(match.value)
-                if (numberMatch != null) {
-                    return numberMatch.value.toIntOrNull()
-                }
-            }
-        }
-
-        // Also try to detect questions by specific Turkish patterns
-        val turkishPatterns = listOf(
-            Regex("^\\s*(\\d+)\\s*[.)]"),        // 1. or 1)
-            Regex("^\\s*Soru\\s*(\\d+)", RegexOption.IGNORE_CASE),  // Soru 1
-            Regex("^\\s*S[.]?\\s*(\\d+)", RegexOption.IGNORE_CASE)  // S.1 or S 1
-        )
-
-        for (pattern in turkishPatterns) {
+        for (pattern in questionPatterns) {
             val match = pattern.find(text)
             if (match != null && match.groupValues.size > 1) {
                 return match.groupValues[1].toIntOrNull()
             }
         }
 
+        // Fallback: simple number at start
+        val simpleMatch = Regex("^\\s*(\\d+)\\s*[.)]").find(text)
+        if (simpleMatch != null && simpleMatch.groupValues.size > 1) {
+            return simpleMatch.groupValues[1].toIntOrNull()
+        }
+
         return null
+    }
+
+    /**
+     * Checks if text is an option (A, B, C, D, E)
+     */
+    private fun isOption(text: String): Boolean {
+        return optionPatterns.any { it.containsMatchIn(text) }
+    }
+
+    /**
+     * Checks if text is the last option (D or E)
+     */
+    private fun isLastOption(text: String): Boolean {
+        return lastOptionPatterns.any { it.containsMatchIn(text) }
     }
 
     /**
@@ -178,14 +242,15 @@ class QuestionDetector(
     }
 
     /**
-     * Data class for question start position
+     * Data class for text element with metadata
      */
-    private data class QuestionStart(
-        val questionNumber: Int,
-        val topY: Int,
-        val leftX: Int,
+    private data class TextElement(
         val text: String,
-        val boundingBox: Rect
+        val bounds: Rect,
+        val isQuestionStart: Boolean,
+        val questionNumber: Int?,
+        val isOption: Boolean,
+        val isLastOption: Boolean
     )
 
     /**
