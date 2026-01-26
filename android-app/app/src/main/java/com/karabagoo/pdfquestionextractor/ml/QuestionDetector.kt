@@ -41,6 +41,10 @@ class QuestionDetector(
     // Pattern for answer choices
     private val answerChoicePattern = Regex("^\\s*[A-E]\\s*[.):]", RegexOption.IGNORE_CASE)
 
+    // Pattern for Roman numeral statements (I., II., III., IV., V., etc.)
+    // OCR sometimes reads "I." as "1." - we need to detect these cases
+    private val romanNumeralContextPattern = Regex("^\\s*1\\s*[.)]\\s*[A-ZÇĞİÖŞÜa-zçğıöşü]", RegexOption.IGNORE_CASE)
+
     suspend fun detectQuestions(
         pageBitmap: Bitmap,
         pageNumber: Int,
@@ -118,7 +122,9 @@ class QuestionDetector(
             val sortedLines = columnLines.sortedBy { it.bounds.top }
 
             // Find question starts within this column
-            val questionStartIndices = sortedLines.indices.filter { sortedLines[it].isQuestionStart }
+            // Filter out likely Roman numerals misread by OCR
+            val potentialStarts = sortedLines.indices.filter { sortedLines[it].isQuestionStart }
+            val questionStartIndices = filterValidQuestionStarts(potentialStarts, sortedLines)
 
             if (questionStartIndices.isEmpty()) continue
 
@@ -207,6 +213,90 @@ class QuestionDetector(
             // Single column - all lines together
             listOf(lines)
         }
+    }
+
+    /**
+     * Filter valid question starts, removing likely Roman numerals misread by OCR.
+     *
+     * Rules:
+     * - Question numbers should be in increasing order within a column
+     * - If "1." appears after a higher question number, it's likely a Roman numeral "I."
+     * - If "1." is followed by lines with "2.", "3." patterns, check if they look like statements
+     */
+    private fun filterValidQuestionStarts(
+        potentialStarts: List<Int>,
+        sortedLines: List<TextLine>
+    ): List<Int> {
+        if (potentialStarts.isEmpty()) return emptyList()
+
+        val validStarts = mutableListOf<Int>()
+        var lastQuestionNumber = 0
+
+        for (idx in potentialStarts) {
+            val line = sortedLines[idx]
+            val questionNum = line.questionNumber ?: continue
+
+            // Check if this is likely a Roman numeral misread by OCR
+            if (isLikelyRomanNumeral(line.text, questionNum, lastQuestionNumber, idx, sortedLines)) {
+                continue
+            }
+
+            // Accept this as a valid question start
+            validStarts.add(idx)
+            lastQuestionNumber = questionNum
+        }
+
+        return validStarts
+    }
+
+    /**
+     * Check if a detected "question number" is likely a Roman numeral misread by OCR.
+     *
+     * Heuristics:
+     * 1. If "1." appears after question 2 or higher, it's likely Roman numeral "I."
+     * 2. If "1." is followed by "II." or "III." patterns in nearby lines, it's likely "I."
+     * 3. If the content after the number looks like a statement (not a question stem), skip it
+     */
+    private fun isLikelyRomanNumeral(
+        text: String,
+        questionNum: Int,
+        lastQuestionNumber: Int,
+        lineIndex: Int,
+        allLines: List<TextLine>
+    ): Boolean {
+        // Rule 1: If we already have a higher question number, "1" is likely Roman "I"
+        if (questionNum == 1 && lastQuestionNumber >= 1) {
+            return true
+        }
+
+        // Rule 2: If this is "1." and next few lines have "2.", "3." with similar short content,
+        // they're likely Roman numeral statements (I., II., III.)
+        if (questionNum == 1) {
+            val nextLines = allLines.drop(lineIndex + 1).take(3)
+            val hasSequentialSmallNumbers = nextLines.count { line ->
+                val num = line.questionNumber
+                num != null && num in 2..5
+            }
+            // If we see 2+ more small numbers in next 3 lines, likely Roman numerals
+            if (hasSequentialSmallNumbers >= 2) {
+                return true
+            }
+        }
+
+        // Rule 3: Small numbers (1-5) appearing mid-page after content started
+        // are likely Roman numerals if preceded by question text
+        if (questionNum in 1..5 && lineIndex > 2) {
+            val prevLines = allLines.take(lineIndex).takeLast(3)
+            val hasQuestionContext = prevLines.any {
+                it.text.contains("göre") || it.text.contains("?") ||
+                it.text.contains("aşağıdaki") || it.text.contains("hangisi")
+            }
+            if (hasQuestionContext) {
+                return true
+            }
+        }
+
+        return false
     }
 
     /**
