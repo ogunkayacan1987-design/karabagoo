@@ -2,27 +2,15 @@ name: Build Android APK
 
 on:
   push:
-    branches:
-      - main
-      - master
-      - 'claude/*'
-    paths:
-      - 'android-app/**'
-      - '.github/workflows/build-apk.yml'
-  pull_request:
-    branches:
-      - main
-      - master
+    branches: [ '*' ]
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -33,47 +21,28 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Create local.properties
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
+      - name: Setup Gradle Wrapper
+        working-directory: android-app
         run: |
-          cd android-app
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          gradle wrapper --gradle-version 8.2 --distribution-type bin
 
-      - name: Generate Gradle Wrapper
+      - name: Build APK
+        working-directory: android-app
         run: |
-          cd android-app
-          gradle wrapper --gradle-version 8.2
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace --info
 
-      - name: Make gradlew executable
-        run: chmod +x android-app/gradlew
-
-      - name: Build Debug APK
-        run: |
-          cd android-app
-          ./gradlew assembleDebug --no-daemon --stacktrace
-
-      - name: Build Release APK (unsigned)
-        run: |
-          cd android-app
-          ./gradlew assembleRelease --no-daemon --stacktrace
-        continue-on-error: true
-
-      - name: List APK files
-        run: |
-          find android-app -name "*.apk" -type f
-
-      - name: Upload Debug APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PDF-Soru-Cikarici-Debug
+          name: PDF-Soru-Cikarici
           path: android-app/app/build/outputs/apk/debug/*.apk
-          retention-days: 30
-          if-no-files-found: warn
-
-      - name: Upload Release APK
-        uses: actions/upload-artifact@v4
-        if: success()
-        with:
-          name: PDF-Soru-Cikarici-Release
-          path: android-app/app/build/outputs/apk/release/*.apk
-          retention-days: 30
-          if-no-files-found: ignore
