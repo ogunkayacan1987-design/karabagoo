@@ -38,13 +38,17 @@ jobs:
 
       - name: Build Debug APK
         working-directory: android-app
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Find APK files
         run: |
-          ./gradlew assembleDebug --stacktrace --debug 2>&1 | tail -500
+          echo "Searching for APK files..."
+          find android-app -name "*.apk" -type f
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
-        if: success()
         with:
           name: PDF-Soru-Cikarici-APK
-          path: android-app/app/build/outputs/apk/debug/*.apk
+          path: android-app/**/build/outputs/apk/**/*.apk
           retention-days: 30
+          if-no-files-found: error
