@@ -75,7 +75,9 @@ jobs:
       - name: Build release APK
         id: build
         working-directory: /tmp/_build
-        run: flutter build apk --release --no-tree-shake-icons 2>&1 | tee $GITHUB_WORKSPACE/build.log
+        run: |
+          set -o pipefail
+          flutter build apk --release --no-tree-shake-icons 2>&1 | tee $GITHUB_WORKSPACE/build.log
         continue-on-error: true
 
       - name: Upload build log
