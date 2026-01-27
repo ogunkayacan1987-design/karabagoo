@@ -29,14 +29,14 @@ jobs:
           
       - name: Create Flutter Project Structure
         run: |
-          # Generate with latest templates, forcing recreation
-          flutter create . --org com.speedguard.app --project-name speedguard --platforms android --force
+          # Create project files (standard command, no force flag)
+          flutter create . --org com.speedguard.app --project-name speedguard
           
           # List files to verify structure (Debugging)
           echo "Listing project root:"
           ls -la
-          echo "Listing android directory:"
-          ls -R android || echo "Android directory missing!"
+          echo "Listing android directory (if exists):"
+          ls -R android || echo "Android directory NOT FOUND"
 
       - name: Configure Android Permissions and Fix Kotlin
         run: |
