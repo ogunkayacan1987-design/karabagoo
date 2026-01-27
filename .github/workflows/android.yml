@@ -29,35 +29,44 @@ jobs:
           
       - name: Create Flutter Project Structure
         run: |
-          # NUCLEAR OPTION: Generate a fresh project in a temp folder
-          echo "Generating temp project..."
-          flutter create temp_runner --org com.speedguard.app --project-name speedguard --platforms android
+          # Enable Android and force creation of standard app template
+          flutter config --enable-android
+          flutter create . --org com.speedguard.app --project-name speedguard --template=app --platforms android --overwrite
           
-          # Move the android folder to our root
-          echo "Moving android folder..."
-          mv temp_runner/android .
-          
-          # Cleanup
-          rm -rf temp_runner
-          
-          # List files to verify structure (Debugging)
-          echo "Listing android directory:"
-          ls -R android || echo "Android directory NOT FOUND"
+          # Debug: Find where build.gradle actually is
+          echo "Locating build.gradle files:"
+          find . -name "build.gradle"
 
       - name: Configure Android Permissions and Fix Kotlin
         run: |
-          # Inject permissions into AndroidManifest.xml
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          # Inject permissions into AndroidManifest.xml (Check file existence first)
+          MANIFEST=$(find . -name AndroidManifest.xml | grep "main/AndroidManifest.xml" | head -n 1)
+          if [ -z "$MANIFEST" ]; then
+            echo "AndroidManifest.xml not found!"
+            exit 1
+          fi
+          
+          echo "Found Manifest at: $MANIFEST"
           PERMISSIONS='<uses-permission android:name="android.permission.INTERNET"/><uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/><uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/><uses-permission android:name="android.permission.WAKE_LOCK"/>'
           sed -i "s|<application|$PERMISSIONS\n    <application|g" $MANIFEST
           
-          # Fix Kotlin Version (Universal Fix)
-          # Replace the entire line defining kotlin_version with the new version
-          BUILD_GRADLE="android/build.gradle"
-          sed -i "/ext.kotlin_version/c\    ext.kotlin_version = '1.9.23'" $BUILD_GRADLE
+          # Fix Kotlin Version (Dynamic Location)
+          # Find the root build.gradle inside android/ (exclude app/build.gradle)
+          BUILD_GRADLE=$(find android -maxdepth 1 -name "build.gradle" | head -n 1)
           
-          echo "Final android/build.gradle:"
-          cat $BUILD_GRADLE
+          if [ -z "$BUILD_GRADLE" ]; then
+             echo "build.gradle not found in android root! Searching deeper..."
+             BUILD_GRADLE=$(find . -name "build.gradle" | grep -v "app/build.gradle" | head -n 1)
+          fi
+          
+          if [ -n "$BUILD_GRADLE" ]; then
+              echo "Patching Kotlin version in: $BUILD_GRADLE"
+              sed -i "/ext.kotlin_version/c\    ext.kotlin_version = '1.9.23'" $BUILD_GRADLE
+              cat $BUILD_GRADLE
+          else
+              echo "ERROR: Could not find android/build.gradle to patch!"
+              exit 1
+          fi
 
 
       - name: Install Dependencies
