@@ -54,34 +54,22 @@ jobs:
         working-directory: /tmp/_build
         run: flutter pub get
 
-      - name: Debug - show configs
-        working-directory: /tmp/_build
-        run: |
-          echo "=== pubspec.yaml ==="
-          cat pubspec.yaml
-          echo ""
-          echo "=== app/build.gradle ==="
-          cat android/app/build.gradle
-          echo ""
-          echo "=== settings.gradle ==="
-          cat android/settings.gradle
-          echo ""
-          echo "=== AndroidManifest.xml ==="
-          cat android/app/src/main/AndroidManifest.xml
-          echo ""
-          echo "=== Flutter doctor ==="
-          flutter doctor -v
-
       - name: Build release APK
         working-directory: /tmp/_build
         run: |
           flutter build apk --release --no-tree-shake-icons > $GITHUB_WORKSPACE/build.log 2>&1 || BUILD_FAILED=1
+
+          echo "### Build Log" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat $GITHUB_WORKSPACE/build.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
           echo "=== FULL BUILD LOG ==="
           cat $GITHUB_WORKSPACE/build.log
           echo "=== END BUILD LOG ==="
+
           if [ "${BUILD_FAILED}" = "1" ]; then
-            echo ""
-            echo "::error::Flutter APK build failed. See log above."
+            echo "::error::Flutter APK build failed"
             exit 1
           fi
 
