@@ -40,13 +40,20 @@ jobs:
           PERMISSIONS='<uses-permission android:name="android.permission.INTERNET"/><uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/><uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/><uses-permission android:name="android.permission.WAKE_LOCK"/>'
           sed -i "s|<application|$PERMISSIONS\n    <application|g" $MANIFEST
           
-          # Fix Kotlin Version (Update to 1.9.23 for compatibility)
+          # Fix Kotlin Version (Strategy: Try replacing variable AND direct plugin version)
           BUILD_GRADLE="android/build.gradle"
-          # Use regex to handle potential extra spaces and different quote types
+          
+          echo "Original android/build.gradle content:"
+          cat $BUILD_GRADLE
+          
+          # Replace variable if exists
           sed -i -E "s/ext.kotlin_version[[:space:]]*=[[:space:]]*['\"].*['\"]/ext.kotlin_version = '1.9.23'/g" $BUILD_GRADLE
           
-          echo "Updated android/build.gradle content:"
-          grep "ext.kotlin_version" $BUILD_GRADLE
+          # Replace hardcoded classpath (common in some templates)
+          sed -i -E "s/org.jetbrains.kotlin:kotlin-gradle-plugin:.*['\"]/org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.23\"/g" $BUILD_GRADLE
+          
+          echo "Modified android/build.gradle content:"
+          cat $BUILD_GRADLE
 
 
       - name: Install Dependencies
