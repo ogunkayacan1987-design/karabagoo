@@ -52,6 +52,44 @@ jobs:
             [ -f "$src" ] && cp "$src" "/tmp/_build/android/app/src/main/res/mipmap-${d}/ic_launcher.png"
           done
 
+      - name: Patch Android SDK to 36 for plugin compatibility
+        working-directory: /tmp/_build
+        run: |
+          # flutter_tts and geolocator_android require compileSdk 36
+          # Patch app/build.gradle to use compileSdk 36
+          sed -i 's/compileSdk = .*/compileSdk = 36/' android/app/build.gradle
+          sed -i 's/compileSdkVersion .*/compileSdkVersion 36/' android/app/build.gradle
+          sed -i 's/targetSdk = .*/targetSdk = 36/' android/app/build.gradle
+          sed -i 's/targetSdkVersion .*/targetSdkVersion 36/' android/app/build.gradle
+
+          # Add subprojects override to force compileSdk 36 for all plugins
+          cat >> android/build.gradle << 'GRADLE'
+
+          subprojects {
+              afterEvaluate { project ->
+                  if (project.plugins.hasPlugin("com.android.library")) {
+                      project.android {
+                          if (namespace == null) {
+                              namespace project.group.toString()
+                          }
+                          compileSdk 36
+                      }
+                  }
+              }
+          }
+          GRADLE
+
+          echo "=== Patched app/build.gradle ==="
+          cat android/app/build.gradle
+          echo ""
+          echo "=== Patched root build.gradle ==="
+          cat android/build.gradle
+
+      - name: Install Android SDK 36
+        run: |
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0" || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --list | grep "android-36" || true
+
       - name: Get dependencies
         working-directory: /tmp/_build
         run: flutter pub get
