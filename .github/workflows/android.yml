@@ -14,6 +14,8 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
+  issues: write
 
 jobs:
   build:
@@ -70,8 +72,40 @@ jobs:
 
           if [ "${BUILD_FAILED}" = "1" ]; then
             echo "::error::Flutter APK build failed"
+            echo "BUILD_FAILED=1" >> $GITHUB_ENV
             exit 1
           fi
+
+      - name: Post build log to PR
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let log = '';
+            try {
+              log = fs.readFileSync(process.env.GITHUB_WORKSPACE + '/build.log', 'utf8');
+            } catch(e) {
+              log = 'Could not read build.log: ' + e.message;
+            }
+            const body = '## Build Failed\n\n```\n' + log.slice(-3000) + '\n```';
+            // Post as issue comment if PR, otherwise create issue
+            if (context.payload.pull_request) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Build Failed: ' + context.sha.substring(0, 7),
+                body: body,
+                labels: ['build-failure']
+              });
+            }
 
       - name: Copy APK
         run: cp /tmp/_build/build/app/outputs/flutter-apk/app-release.apk app-release.apk
