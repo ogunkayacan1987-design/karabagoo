@@ -29,8 +29,8 @@ jobs:
           
       - name: Create Flutter Project Structure
         run: |
-          # Create project files (standard command, no force flag)
-          flutter create . --org com.speedguard.app --project-name speedguard
+          # Create project files (explicitly requesting android)
+          flutter create . --org com.speedguard.app --project-name speedguard --platforms android
           
           # List files to verify structure (Debugging)
           echo "Listing project root:"
