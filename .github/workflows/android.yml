@@ -42,6 +42,15 @@ jobs:
           flutter --version
           flutter doctor -v
 
+      - name: Generate Gradle wrapper
+        run: |
+          flutter create --platforms android --org com.speedguard --project-name speed_guard /tmp/_scaffold
+          cp /tmp/_scaffold/android/gradlew android/gradlew
+          cp /tmp/_scaffold/android/gradlew.bat android/gradlew.bat
+          mkdir -p android/gradle/wrapper
+          cp /tmp/_scaffold/android/gradle/wrapper/gradle-wrapper.jar android/gradle/wrapper/
+          chmod +x android/gradlew
+
       - name: Get dependencies
         run: flutter pub get
 
