@@ -37,35 +37,29 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Build in clean Flutter project
+      - name: Create clean Flutter project
+        run: flutter create --platforms android --org com.speedguard --project-name app /tmp/_build
+
+      - name: Copy source files into project
         run: |
-          set -e
-
-          # Create a completely fresh Flutter project
-          flutter create --platforms android --org com.speedguard --project-name app /tmp/_build
-          cd /tmp/_build
-
-          # Replace lib/main.dart with our app code
-          cp $GITHUB_WORKSPACE/lib/main.dart lib/main.dart
-
-          # Replace pubspec.yaml with our dependencies
-          cp $GITHUB_WORKSPACE/pubspec.yaml pubspec.yaml
-
-          # Copy our custom AndroidManifest.xml (permissions, landscape, etc.)
-          cp $GITHUB_WORKSPACE/android/app/src/main/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
-
-          # Copy our custom app icons
-          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            if [ -f "$GITHUB_WORKSPACE/android/app/src/main/res/mipmap-${density}/ic_launcher.png" ]; then
-              cp "$GITHUB_WORKSPACE/android/app/src/main/res/mipmap-${density}/ic_launcher.png" \
-                 "android/app/src/main/res/mipmap-${density}/ic_launcher.png"
-            fi
+          cp $GITHUB_WORKSPACE/lib/main.dart /tmp/_build/lib/main.dart
+          cp $GITHUB_WORKSPACE/pubspec.yaml /tmp/_build/pubspec.yaml
+          cp $GITHUB_WORKSPACE/android/app/src/main/AndroidManifest.xml /tmp/_build/android/app/src/main/AndroidManifest.xml
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            src="$GITHUB_WORKSPACE/android/app/src/main/res/mipmap-${d}/ic_launcher.png"
+            [ -f "$src" ] && cp "$src" "/tmp/_build/android/app/src/main/res/mipmap-${d}/ic_launcher.png"
           done
 
-          # Get dependencies
-          flutter pub get
+      - name: Get dependencies
+        working-directory: /tmp/_build
+        run: flutter pub get
 
-          # Show configs for debugging
+      - name: Debug - show configs
+        working-directory: /tmp/_build
+        run: |
+          echo "=== pubspec.yaml ==="
+          cat pubspec.yaml
+          echo ""
           echo "=== app/build.gradle ==="
           cat android/app/build.gradle
           echo ""
@@ -74,14 +68,38 @@ jobs:
           echo ""
           echo "=== AndroidManifest.xml ==="
           cat android/app/src/main/AndroidManifest.xml
+          echo ""
+          echo "=== Flutter doctor ==="
+          flutter doctor -v
 
-          # Build release APK
-          flutter build apk --release --no-tree-shake-icons
+      - name: Build release APK
+        id: build
+        working-directory: /tmp/_build
+        run: flutter build apk --release --no-tree-shake-icons 2>&1 | tee $GITHUB_WORKSPACE/build.log
+        continue-on-error: true
 
-          # Copy APK back to workspace
-          cp build/app/outputs/flutter-apk/app-release.apk $GITHUB_WORKSPACE/app-release.apk
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7
+
+      - name: Check build result
+        if: steps.build.outcome == 'failure'
+        run: |
+          echo "BUILD FAILED - see build-log artifact for details"
+          echo "=== Last 100 lines of build log ==="
+          tail -100 $GITHUB_WORKSPACE/build.log
+          exit 1
+
+      - name: Copy APK
+        if: steps.build.outcome == 'success'
+        run: cp /tmp/_build/build/app/outputs/flutter-apk/app-release.apk app-release.apk
 
       - name: Upload APK artifact
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: SpeedGuard-APK
@@ -89,7 +107,7 @@ jobs:
           retention-days: 90
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.build.outcome == 'success' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           name: SpeedGuard ${{ github.ref_name }}
