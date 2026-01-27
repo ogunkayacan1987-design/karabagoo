@@ -73,35 +73,22 @@ jobs:
           flutter doctor -v
 
       - name: Build release APK
-        id: build
         working-directory: /tmp/_build
         run: |
-          set -o pipefail
-          flutter build apk --release --no-tree-shake-icons 2>&1 | tee $GITHUB_WORKSPACE/build.log
-        continue-on-error: true
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build.log
-          retention-days: 7
-
-      - name: Check build result
-        if: steps.build.outcome == 'failure'
-        run: |
-          echo "BUILD FAILED - see build-log artifact for details"
-          echo "=== Last 100 lines of build log ==="
-          tail -100 $GITHUB_WORKSPACE/build.log
-          exit 1
+          flutter build apk --release --no-tree-shake-icons > $GITHUB_WORKSPACE/build.log 2>&1 || BUILD_FAILED=1
+          echo "=== FULL BUILD LOG ==="
+          cat $GITHUB_WORKSPACE/build.log
+          echo "=== END BUILD LOG ==="
+          if [ "${BUILD_FAILED}" = "1" ]; then
+            echo ""
+            echo "::error::Flutter APK build failed. See log above."
+            exit 1
+          fi
 
       - name: Copy APK
-        if: steps.build.outcome == 'success'
         run: cp /tmp/_build/build/app/outputs/flutter-apk/app-release.apk app-release.apk
 
       - name: Upload APK artifact
-        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: SpeedGuard-APK
@@ -109,7 +96,7 @@ jobs:
           retention-days: 90
 
       - name: Create GitHub Release
-        if: steps.build.outcome == 'success' && startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           name: SpeedGuard ${{ github.ref_name }}
