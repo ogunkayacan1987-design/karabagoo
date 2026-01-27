@@ -37,19 +37,47 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Verify Flutter installation
-        run: |
-          flutter --version
-          flutter doctor -v
+      - name: Verify Flutter
+        run: flutter --version
 
-      - name: Generate Gradle wrapper
+      - name: Scaffold Android project
         run: |
-          flutter create --platforms android --org com.speedguard --project-name speed_guard /tmp/_scaffold
+          # Generate a fresh Flutter project with matching package name
+          flutter create --platforms android --org com.speedguard --project-name app /tmp/_scaffold
+
+          # Copy Gradle wrapper files (gradlew, gradlew.bat, wrapper jar)
           cp /tmp/_scaffold/android/gradlew android/gradlew
           cp /tmp/_scaffold/android/gradlew.bat android/gradlew.bat
-          mkdir -p android/gradle/wrapper
           cp /tmp/_scaffold/android/gradle/wrapper/gradle-wrapper.jar android/gradle/wrapper/
+
+          # Copy compatible Gradle config files (AGP, Kotlin, Gradle versions)
+          cp /tmp/_scaffold/android/build.gradle android/build.gradle
+          cp /tmp/_scaffold/android/settings.gradle android/settings.gradle
+          cp /tmp/_scaffold/android/gradle.properties android/gradle.properties
+          cp /tmp/_scaffold/android/gradle/wrapper/gradle-wrapper.properties android/gradle/wrapper/gradle-wrapper.properties
+
+          # Copy app-level build.gradle and merge our customizations
+          cp /tmp/_scaffold/android/app/build.gradle android/app/build.gradle
+
+          # Patch the generated build.gradle with our settings
+          sed -i 's/namespace = "com.speedguard.app"/namespace = "com.speedguard.app"/' android/app/build.gradle
+          sed -i 's/applicationId = "com.speedguard.app"/applicationId = "com.speedguard.app"/' android/app/build.gradle
+          sed -i 's/minSdk = .*/minSdk = 21/' android/app/build.gradle
+
+          # Use debug signing for release build
+          sed -i 's/signingConfig = signingConfigs.debug/signingConfig = signingConfigs.debug/' android/app/build.gradle
+
+          # Ensure release build type uses debug signing
+          if ! grep -q 'signingConfig = signingConfigs.debug' android/app/build.gradle; then
+            sed -i '/release {/a\            signingConfig = signingConfigs.debug' android/app/build.gradle
+          fi
+
           chmod +x android/gradlew
+
+          echo "=== Generated build.gradle ==="
+          cat android/app/build.gradle
+          echo "=== Generated settings.gradle ==="
+          cat android/settings.gradle
 
       - name: Get dependencies
         run: flutter pub get
