@@ -1,0 +1,24 @@
+name: speedguard
+description: A minimal driving support application.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  geolocator: ^11.0.0
+  http: ^1.2.0
+  flutter_tts: ^4.0.2
+  permission_handler: ^11.3.0
+  wakelock_plus: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
