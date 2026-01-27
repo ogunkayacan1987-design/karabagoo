@@ -29,6 +29,9 @@ jobs:
           
       - name: Create Flutter Project Structure
         run: |
+          # Explicitly enable Android platform
+          flutter config --enable-android
+          
           # Create project files (explicitly requesting android)
           flutter create . --org com.speedguard.app --project-name speedguard --platforms android
           
