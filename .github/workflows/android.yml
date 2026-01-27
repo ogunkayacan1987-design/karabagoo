@@ -3,10 +3,13 @@ name: Build & Release Android APK
 on:
   push:
     branches:
-      - main
-      - master
+      - '**'
     tags:
       - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
 permissions:
@@ -34,28 +37,49 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Verify Flutter installation
+        run: |
+          flutter --version
+          flutter doctor -v
+
       - name: Get dependencies
         run: flutter pub get
 
       - name: Build release APK
-        run: flutter build apk --release
+        run: flutter build apk --release --no-tree-shake-icons
 
       - name: Rename APK
-        run: |
-          cp build/app/outputs/flutter-apk/app-release.apk app-release.apk
+        run: cp build/app/outputs/flutter-apk/app-release.apk app-release.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
+          name: SpeedGuard-APK
           path: app-release.apk
-          retention-days: 30
+          retention-days: 90
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          name: SpeedGuard ${{ github.ref_name }}
           files: app-release.apk
           generate_release_notes: true
+          body: |
+            ## SpeedGuard ${{ github.ref_name }}
+
+            Sürüş asistanı uygulaması - Hız ve hız limiti göstergesi.
+
+            ### Kurulum
+            1. `app-release.apk` dosyasını indirin
+            2. Android telefonunuzda **Bilinmeyen kaynaklara izin ver** ayarını açın
+            3. APK dosyasını yükleyin ve açın
+            4. GPS iznini verin
+
+            ### Özellikler
+            - GPS ile anlık hız takibi
+            - OpenStreetMap'ten yol hız limiti
+            - Hız aşımında sesli uyarı
+            - Tam ekran, sade arayüz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
