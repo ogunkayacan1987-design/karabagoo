@@ -37,56 +37,49 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Verify Flutter
-        run: flutter --version
-
-      - name: Scaffold Android project
+      - name: Build in clean Flutter project
         run: |
-          # Generate a fresh Flutter project with matching package name
-          flutter create --platforms android --org com.speedguard --project-name app /tmp/_scaffold
+          set -e
 
-          # Copy Gradle wrapper files (gradlew, gradlew.bat, wrapper jar)
-          cp /tmp/_scaffold/android/gradlew android/gradlew
-          cp /tmp/_scaffold/android/gradlew.bat android/gradlew.bat
-          cp /tmp/_scaffold/android/gradle/wrapper/gradle-wrapper.jar android/gradle/wrapper/
+          # Create a completely fresh Flutter project
+          flutter create --platforms android --org com.speedguard --project-name app /tmp/_build
+          cd /tmp/_build
 
-          # Copy compatible Gradle config files (AGP, Kotlin, Gradle versions)
-          cp /tmp/_scaffold/android/build.gradle android/build.gradle
-          cp /tmp/_scaffold/android/settings.gradle android/settings.gradle
-          cp /tmp/_scaffold/android/gradle.properties android/gradle.properties
-          cp /tmp/_scaffold/android/gradle/wrapper/gradle-wrapper.properties android/gradle/wrapper/gradle-wrapper.properties
+          # Replace lib/main.dart with our app code
+          cp $GITHUB_WORKSPACE/lib/main.dart lib/main.dart
 
-          # Copy app-level build.gradle and merge our customizations
-          cp /tmp/_scaffold/android/app/build.gradle android/app/build.gradle
+          # Replace pubspec.yaml with our dependencies
+          cp $GITHUB_WORKSPACE/pubspec.yaml pubspec.yaml
 
-          # Patch the generated build.gradle with our settings
-          sed -i 's/namespace = "com.speedguard.app"/namespace = "com.speedguard.app"/' android/app/build.gradle
-          sed -i 's/applicationId = "com.speedguard.app"/applicationId = "com.speedguard.app"/' android/app/build.gradle
-          sed -i 's/minSdk = .*/minSdk = 21/' android/app/build.gradle
+          # Copy our custom AndroidManifest.xml (permissions, landscape, etc.)
+          cp $GITHUB_WORKSPACE/android/app/src/main/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
 
-          # Use debug signing for release build
-          sed -i 's/signingConfig = signingConfigs.debug/signingConfig = signingConfigs.debug/' android/app/build.gradle
+          # Copy our custom app icons
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            if [ -f "$GITHUB_WORKSPACE/android/app/src/main/res/mipmap-${density}/ic_launcher.png" ]; then
+              cp "$GITHUB_WORKSPACE/android/app/src/main/res/mipmap-${density}/ic_launcher.png" \
+                 "android/app/src/main/res/mipmap-${density}/ic_launcher.png"
+            fi
+          done
 
-          # Ensure release build type uses debug signing
-          if ! grep -q 'signingConfig = signingConfigs.debug' android/app/build.gradle; then
-            sed -i '/release {/a\            signingConfig = signingConfigs.debug' android/app/build.gradle
-          fi
+          # Get dependencies
+          flutter pub get
 
-          chmod +x android/gradlew
-
-          echo "=== Generated build.gradle ==="
+          # Show configs for debugging
+          echo "=== app/build.gradle ==="
           cat android/app/build.gradle
-          echo "=== Generated settings.gradle ==="
+          echo ""
+          echo "=== settings.gradle ==="
           cat android/settings.gradle
+          echo ""
+          echo "=== AndroidManifest.xml ==="
+          cat android/app/src/main/AndroidManifest.xml
 
-      - name: Get dependencies
-        run: flutter pub get
+          # Build release APK
+          flutter build apk --release --no-tree-shake-icons
 
-      - name: Build release APK
-        run: flutter build apk --release --no-tree-shake-icons
-
-      - name: Rename APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk app-release.apk
+          # Copy APK back to workspace
+          cp build/app/outputs/flutter-apk/app-release.apk $GITHUB_WORKSPACE/app-release.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
