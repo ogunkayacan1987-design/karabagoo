@@ -29,16 +29,19 @@ jobs:
           
       - name: Create Flutter Project Structure
         run: |
-          # Explicitly enable Android platform
-          flutter config --enable-android
+          # NUCLEAR OPTION: Generate a fresh project in a temp folder
+          echo "Generating temp project..."
+          flutter create temp_runner --org com.speedguard.app --project-name speedguard --platforms android
           
-          # Create project files (explicitly requesting android)
-          flutter create . --org com.speedguard.app --project-name speedguard --platforms android
+          # Move the android folder to our root
+          echo "Moving android folder..."
+          mv temp_runner/android .
+          
+          # Cleanup
+          rm -rf temp_runner
           
           # List files to verify structure (Debugging)
-          echo "Listing project root:"
-          ls -la
-          echo "Listing android directory (if exists):"
+          echo "Listing android directory:"
           ls -R android || echo "Android directory NOT FOUND"
 
       - name: Configure Android Permissions and Fix Kotlin
