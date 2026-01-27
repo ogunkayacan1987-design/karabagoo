@@ -25,12 +25,11 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.0'
-          channel: 'stable'
-
+          channel: 'stable' # Use latest stable version for best compatibility
+          
       - name: Create Flutter Project Structure
         run: |
-          # Generate the missing android/ and ios/ folders
+          # Generate with latest templates
           flutter create . --org com.speedguard.app --project-name speedguard --platforms android
 
       - name: Configure Android Permissions and Fix Kotlin
@@ -40,19 +39,12 @@ jobs:
           PERMISSIONS='<uses-permission android:name="android.permission.INTERNET"/><uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/><uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/><uses-permission android:name="android.permission.WAKE_LOCK"/>'
           sed -i "s|<application|$PERMISSIONS\n    <application|g" $MANIFEST
           
-          # Fix Kotlin Version (Strategy: Try replacing variable AND direct plugin version)
+          # Fix Kotlin Version (Universal Fix)
+          # Replace the entire line defining kotlin_version with the new version
           BUILD_GRADLE="android/build.gradle"
+          sed -i "/ext.kotlin_version/c\    ext.kotlin_version = '1.9.23'" $BUILD_GRADLE
           
-          echo "Original android/build.gradle content:"
-          cat $BUILD_GRADLE
-          
-          # Replace variable if exists
-          sed -i -E "s/ext.kotlin_version[[:space:]]*=[[:space:]]*['\"].*['\"]/ext.kotlin_version = '1.9.23'/g" $BUILD_GRADLE
-          
-          # Replace hardcoded classpath (common in some templates)
-          sed -i -E "s/org.jetbrains.kotlin:kotlin-gradle-plugin:.*['\"]/org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.23\"/g" $BUILD_GRADLE
-          
-          echo "Modified android/build.gradle content:"
+          echo "Final android/build.gradle:"
           cat $BUILD_GRADLE
 
 
