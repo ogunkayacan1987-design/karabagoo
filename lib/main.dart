@@ -41,9 +41,8 @@ class SpeedScreen extends StatefulWidget {
   State<SpeedScreen> createState() => _SpeedScreenState();
 }
 
-class _SpeedScreenState extends State<SpeedScreen> {
+class _SpeedScreenState extends State<SpeedScreen> with WidgetsBindingObserver {
   static const int _defaultSpeedLimit = 50;
-  static const Duration _gpsInterval = Duration(seconds: 1);
   static const Duration _limitFetchInterval = Duration(seconds: 10);
   static const Duration _overpassTimeout = Duration(seconds: 5);
 
@@ -55,7 +54,7 @@ class _SpeedScreenState extends State<SpeedScreen> {
   String? _errorMessage;
 
   late FlutterTts _tts;
-  Timer? _gpsTimer;
+  StreamSubscription<Position>? _positionStream;
   Timer? _limitTimer;
   double _lastLat = 0;
   double _lastLon = 0;
@@ -65,6 +64,7 @@ class _SpeedScreenState extends State<SpeedScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initTts();
     _initLocation();
     WakelockPlus.enable();
@@ -72,11 +72,20 @@ class _SpeedScreenState extends State<SpeedScreen> {
 
   @override
   void dispose() {
-    _gpsTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _positionStream?.cancel();
     _limitTimer?.cancel();
     _tts.stop();
     WakelockPlus.disable();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Re-check permission when user returns from Settings
+    if (state == AppLifecycleState.resumed && !_hasPermission) {
+      _initLocation();
+    }
   }
 
   void _initTts() {
@@ -88,96 +97,110 @@ class _SpeedScreenState extends State<SpeedScreen> {
   }
 
   Future<void> _initLocation() async {
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      setState(() {
-        _isLoading = false;
-        _errorMessage = 'Location services are disabled.\nPlease enable GPS.';
-      });
-      return;
-    }
-
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
         setState(() {
           _isLoading = false;
-          _errorMessage = 'Location permission denied.\nPlease grant access.';
+          _errorMessage = 'GPS kapalı!\nLütfen konum servislerini açın.';
         });
         return;
       }
-    }
 
-    if (permission == LocationPermission.deniedForever) {
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          setState(() {
+            _isLoading = false;
+            _errorMessage = 'Konum izni reddedildi.\nLütfen izin verin.';
+          });
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage =
+              'Konum izni kalıcı olarak reddedildi.\nAyarlardan izin verin.';
+        });
+        // Try to open app settings so user can grant permission
+        await Geolocator.openAppSettings();
+        return;
+      }
+
+      setState(() {
+        _hasPermission = true;
+        _isLoading = false;
+        _errorMessage = null;
+      });
+
+      _startGpsStream();
+      _startLimitFetching();
+    } catch (e) {
       setState(() {
         _isLoading = false;
-        _errorMessage =
-            'Location permission permanently denied.\nPlease enable in Settings.';
+        _errorMessage = 'GPS hatası: $e';
       });
-      return;
     }
-
-    setState(() {
-      _hasPermission = true;
-      _isLoading = false;
-    });
-
-    _startGpsUpdates();
-    _startLimitFetching();
   }
 
-  void _startGpsUpdates() {
-    _updatePosition();
-    _gpsTimer = Timer.periodic(_gpsInterval, (_) => _updatePosition());
+  void _startGpsStream() {
+    // Cancel existing stream if any
+    _positionStream?.cancel();
+
+    // Use position stream for continuous tracking (much better than polling)
+    const locationSettings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 0,
+    );
+
+    _positionStream = Geolocator.getPositionStream(
+      locationSettings: locationSettings,
+    ).listen(
+      (Position position) {
+        final speedMps = position.speed < 0 ? 0.0 : position.speed;
+        final speedKmh = (speedMps * 3.6).round();
+
+        final lat = position.latitude;
+        final lon = position.longitude;
+
+        final exceeding = speedKmh > _speedLimit;
+
+        if (exceeding && !_warningSpoken) {
+          _warningSpoken = true;
+          _tts.speak('Speed limit exceeded');
+        } else if (!exceeding) {
+          _warningSpoken = false;
+        }
+
+        setState(() {
+          _currentSpeed = speedKmh;
+          _isExceeding = exceeding;
+          _lastLat = lat;
+          _lastLon = lon;
+        });
+
+        // Fetch speed limit on first valid position
+        if (lat != 0 && lon != 0 && _speedLimit == _defaultSpeedLimit && !_isFetchingLimit) {
+          _fetchSpeedLimit(lat, lon);
+        }
+      },
+      onError: (error) {
+        // Don't crash, just log
+        debugPrint('GPS stream error: $error');
+      },
+    );
   }
 
   void _startLimitFetching() {
+    _limitTimer?.cancel();
     _limitTimer = Timer.periodic(_limitFetchInterval, (_) {
       if (_lastLat != 0 && _lastLon != 0) {
         _fetchSpeedLimit(_lastLat, _lastLon);
       }
     });
-  }
-
-  Future<void> _updatePosition() async {
-    try {
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          distanceFilter: 0,
-        ),
-      );
-
-      final speedMps = position.speed < 0 ? 0.0 : position.speed;
-      final speedKmh = (speedMps * 3.6).round();
-
-      final lat = position.latitude;
-      final lon = position.longitude;
-
-      final exceeding = speedKmh > _speedLimit;
-
-      if (exceeding && !_warningSpoken) {
-        _warningSpoken = true;
-        _tts.speak('Speed limit exceeded');
-      } else if (!exceeding) {
-        _warningSpoken = false;
-      }
-
-      setState(() {
-        _currentSpeed = speedKmh;
-        _isExceeding = exceeding;
-        _lastLat = lat;
-        _lastLon = lon;
-      });
-
-      // Fetch speed limit on first valid position
-      if (_lastLat != 0 && _lastLon != 0 && _speedLimit == _defaultSpeedLimit && !_isFetchingLimit) {
-        _fetchSpeedLimit(lat, lon);
-      }
-    } catch (_) {
-      // GPS reading failed, keep last known values
-    }
   }
 
   Future<void> _fetchSpeedLimit(double lat, double lon) async {
@@ -220,7 +243,6 @@ out tags;
   }
 
   int? _parseSpeedLimit(String raw) {
-    // Handle formats: "50", "50 km/h", "30 mph", etc.
     final cleaned = raw.replaceAll(RegExp(r'[^0-9.]'), ' ').trim();
     final parts = cleaned.split(RegExp(r'\s+'));
     if (parts.isEmpty) return null;
@@ -228,7 +250,6 @@ out tags;
     final value = int.tryParse(parts[0]);
     if (value == null) return null;
 
-    // Convert mph to km/h if needed
     if (raw.toLowerCase().contains('mph')) {
       return (value * 1.60934).round();
     }
@@ -242,7 +263,17 @@ out tags;
       return const Scaffold(
         backgroundColor: Colors.black,
         body: Center(
-          child: CircularProgressIndicator(color: Colors.white),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(color: Colors.white),
+              SizedBox(height: 20),
+              Text(
+                'GPS bekleniyor...',
+                style: TextStyle(color: Colors.white70, fontSize: 20),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -253,27 +284,33 @@ out tags;
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(32),
-            child: Text(
-              _errorMessage!,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 24,
-                fontWeight: FontWeight.w500,
-              ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.location_off, color: Colors.red, size: 64),
+                const SizedBox(height: 20),
+                Text(
+                  _errorMessage!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 30),
+                ElevatedButton.icon(
+                  onPressed: _initLocation,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Tekrar Dene', style: TextStyle(fontSize: 18)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white24,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ),
-      );
-    }
-
-    if (!_hasPermission) {
-      return const Scaffold(
-        backgroundColor: Colors.black,
-        body: Center(
-          child: Text(
-            'Waiting for GPS permission...',
-            style: TextStyle(color: Colors.white70, fontSize: 24),
           ),
         ),
       );
