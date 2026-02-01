@@ -1,235 +1,275 @@
-import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
-import 'package:flutter_tts/flutter_tts.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:window_manager/window_manager.dart';
+import 'dart:io';
 
-void main() {
-  runApp(const SpeedGuardApp());
+import 'screens/admin_screen.dart';
+import 'screens/client_screen.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Windows için pencere ayarları
+  if (Platform.isWindows) {
+    await windowManager.ensureInitialized();
+
+    WindowOptions windowOptions = const WindowOptions(
+      size: Size(1200, 800),
+      minimumSize: Size(800, 600),
+      center: true,
+      backgroundColor: Colors.transparent,
+      skipTaskbar: false,
+      titleBarStyle: TitleBarStyle.normal,
+      title: 'Okul Mesajlaşma Sistemi',
+    );
+
+    windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+  }
+
+  runApp(const OkulMesajlasmaApp());
 }
 
-class SpeedGuardApp extends StatelessWidget {
-  const SpeedGuardApp({super.key});
+class OkulMesajlasmaApp extends StatelessWidget {
+  const OkulMesajlasmaApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'SpeedGuard',
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: Colors.black,
+      title: 'Okul Mesajlaşma Sistemi',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.indigo,
+          brightness: Brightness.light,
+        ),
+        useMaterial3: true,
+        fontFamily: 'Segoe UI',
       ),
-      home: const DashboardScreen(),
+      home: const ModeSelectionScreen(),
     );
   }
 }
 
-class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
-
-  @override
-  State<DashboardScreen> createState() => _DashboardScreenState();
-}
-
-class _DashboardScreenState extends State<DashboardScreen> {
-  double _currentSpeedKmH = 0;
-  int _speedLimitKmH = 50; // Default limit
-  bool _isOverspeeding = false;
-  FlutterTts _flutterTts = FlutterTts();
-  Timer? _limitUpdateTimer;
-  StreamSubscription<Position>? _positionStream;
-  DateTime _lastAlertTime = DateTime.now();
-
-  @override
-  void initState() {
-    super.initState();
-    _initApp();
-  }
-
-  Future<void> _initApp() async {
-    // Keep screen on
-    await WakelockPlus.enable();
-
-    // Setup TTS
-    await _flutterTts.setLanguage("tr-TR");
-    await _flutterTts.setSpeechRate(0.5);
-
-    // Request permissions
-    Map<Permission, PermissionStatus> statuses = await [
-      Permission.location,
-    ].request();
-
-    if (statuses[Permission.location]!.isGranted) {
-      _startTracking();
-    }
-  }
-
-  void _startTracking() {
-    // Location Settings
-    const LocationSettings locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 0,
-    );
-
-    _positionStream = Geolocator.getPositionStream(locationSettings: locationSettings)
-        .listen((Position position) {
-      _updateSpeed(position);
-      // Periodic speed limit check (throttled to avoid API spam, but user said "GPS refresh 1s", APi usage might be heavy if 1s.
-      // Optimizing: Check limit only if moved significantly or every few seconds.
-      // Requirement: "GPS 1 sec refresh". Limit logic: "Get limit using OSM".
-      // We will check limit every 5 seconds to be safe on free API, but update speed instantly.
-    });
-
-    _limitUpdateTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
-       Position? position = await Geolocator.getLastKnownPosition();
-       if (position != null) {
-         _fetchSpeedLimit(position.latitude, position.longitude);
-       }
-    });
-  }
-
-  void _updateSpeed(Position position) {
-    // speed is in m/s. Convert to km/h.
-    double speedKmH = (position.speed * 3.6);
-    if (speedKmH < 0) speedKmH = 0;
-
-    setState(() {
-      _currentSpeedKmH = speedKmH;
-      _checkOverspeed();
-    });
-  }
-
-  Future<void> _fetchSpeedLimit(double lat, double lon) async {
-    // Overpass API to get maxspeed of nearest way
-    // Query: around 25m radius, look for ways with maxspeed.
-    final String query = """
-      [out:json];
-      way[maxspeed](around:25,$lat,$lon);
-      out tags;
-    """;
-    final String url = "https://overpass-api.de/api/interpreter?data=${Uri.encodeComponent(query)}";
-
-    try {
-      final response = await http.get(Uri.parse(url));
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['elements'] != null && data['elements'].isNotEmpty) {
-          // Parse maxspeed (can be "50", "30", "TR:urban" etc. Simplified parsing)
-          String? maxSpeedStr = data['elements'][0]['tags']['maxspeed'];
-          if (maxSpeedStr != null) {
-             int? limit = int.tryParse(maxSpeedStr);
-             if (limit != null) {
-               setState(() {
-                 _speedLimitKmH = limit;
-                 _checkOverspeed();
-               });
-             } else {
-               // Handle vague formats like "TR:urban" -> defaults?
-               // For minimal MVP, ignore complex tags.
-             }
-          }
-        }
-      }
-    } catch (e) {
-      // API Fail: keep previous or default
-      debugPrint("API Error: $e");
-    }
-  }
-
-  void _checkOverspeed() {
-    bool over = _currentSpeedKmH > _speedLimitKmH;
-    if (over != _isOverspeeding) {
-      setState(() {
-        _isOverspeeding = over;
-      });
-    }
-
-    if (over) {
-      // Throttle voice alert to every 5 seconds
-      if (DateTime.now().difference(_lastAlertTime).inSeconds > 5) {
-        _flutterTts.speak("Hız sınırı aşıldı");
-        _lastAlertTime = DateTime.now();
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _positionStream?.cancel();
-    _limitUpdateTimer?.cancel();
-    WakelockPlus.disable();
-    super.dispose();
-  }
+/// Başlangıç ekranı - Admin veya İstemci modu seçimi
+class ModeSelectionScreen extends StatelessWidget {
+  const ModeSelectionScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    Color textColor = _isOverspeeding ? Colors.red : Colors.green;
-
     return Scaffold(
-      body: Row(
-        children: [
-          // Left: Current Speed
-          Expanded(
-            child: Container(
-              color: Colors.black,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    _currentSpeedKmH.toStringAsFixed(0),
-                    style: TextStyle(
-                      fontSize: 120, // Huge font
-                      fontWeight: FontWeight.bold,
-                      color: textColor,
-                    ),
-                  ),
-                  const Text(
-                    "KM/S",
-                    style: TextStyle(color: Colors.grey, fontSize: 20),
-                  ),
-                ],
-              ),
-            ),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.indigo[400]!,
+              Colors.teal[400]!,
+            ],
           ),
-          // Divider
-          Container(width: 2, color: Colors.grey[800]),
-          // Right: Speed Limit
-          Expanded(
+        ),
+        child: Center(
+          child: Card(
+            elevation: 8,
+            margin: const EdgeInsets.all(32),
             child: Container(
-              color: Colors.black,
+              constraints: const BoxConstraints(maxWidth: 600),
+              padding: const EdgeInsets.all(48),
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
                 children: [
+                  // Logo/Icon
                   Container(
-                    padding: const EdgeInsets.all(20),
+                    padding: const EdgeInsets.all(24),
                     decoration: BoxDecoration(
+                      color: Colors.indigo[50],
                       shape: BoxShape.circle,
-                      border: Border.all(color: Colors.red, width: 10),
-                      color: Colors.white,
-
                     ),
-                    child: Text(
-                      _speedLimitKmH.toString(),
-                      style: const TextStyle(
-                        fontSize: 80,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
-                      ),
+                    child: Icon(
+                      Icons.school,
+                      size: 64,
+                      color: Colors.indigo[700],
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 24),
+
+                  // Başlık
                   const Text(
-                    "SINIR",
-                    style: TextStyle(color: Colors.grey, fontSize: 20),
+                    'Okul Mesajlaşma Sistemi',
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'WiFi tabanlı okul içi iletişim platformu',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Colors.grey[600],
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 48),
+
+                  // Mod seçim butonları
+                  Row(
+                    children: [
+                      // Admin butonu
+                      Expanded(
+                        child: _ModeCard(
+                          icon: Icons.admin_panel_settings,
+                          title: 'Yönetim Paneli',
+                          subtitle: 'Mesaj ve dosya gönderin',
+                          color: Colors.indigo,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const AdminScreen(),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 24),
+                      // İstemci butonu
+                      Expanded(
+                        child: _ModeCard(
+                          icon: Icons.tv,
+                          title: 'Sınıf Ekranı',
+                          subtitle: 'Mesajları görüntüleyin',
+                          color: Colors.teal,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const ClientScreen(),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 32),
+
+                  // Bilgi
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.info_outline, color: Colors.blue[700]),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Yonetim Paneli: Ogretmenler odası veya mudur odasında\n'
+                            'Sınıf Ekranı: Akıllı tahtalarda çalıştırın',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.blue[900],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
           ),
-        ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Mod seçim kartı widget'ı
+class _ModeCard extends StatefulWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _ModeCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  State<_ModeCard> createState() => _ModeCardState();
+}
+
+class _ModeCardState extends State<_ModeCard> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        transform: Matrix4.identity()..scale(_isHovered ? 1.02 : 1.0),
+        child: InkWell(
+          onTap: widget.onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: _isHovered ? widget.color.withOpacity(0.1) : Colors.grey[50],
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: _isHovered ? widget.color : Colors.grey[300]!,
+                width: 2,
+              ),
+            ),
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: widget.color.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    widget.icon,
+                    size: 48,
+                    color: widget.color,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  widget.title,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: widget.color,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  widget.subtitle,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey[600],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
