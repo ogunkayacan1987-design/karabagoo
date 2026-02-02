@@ -68,6 +68,16 @@ class Room {
     );
   }
 
+  /// Eşitlik kontrolü (DropdownButton için gerekli)
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is Room && other.id == id;
+  }
+
+  @override
+  int get hashCode => id.hashCode;
+
   /// Varsayılan okul odaları
   static List<Room> getDefaultRooms() {
     return [
