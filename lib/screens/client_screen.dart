@@ -283,9 +283,37 @@ class _ClientScreenState extends State<ClientScreen> {
               foregroundColor: Colors.white,
             ),
           ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _saveAndOpenFile(message);
+            },
+            icon: const Icon(Icons.open_in_new),
+            label: const Text('Aç'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  Future<void> _saveAndOpenFile(Message message) async {
+    if (message.fileData == null || message.fileName == null) return;
+
+    try {
+      final directory = await getDownloadsDirectory() ??
+          await getApplicationDocumentsDirectory();
+      final filePath = '${directory.path}/${message.fileName}';
+      final file = File(filePath);
+      await file.writeAsBytes(message.fileData!);
+      _showSnackBar('Dosya açılıyor...', Colors.blue);
+      await _openFile(filePath);
+    } catch (e) {
+      _showSnackBar('Dosya açılamadı: $e', Colors.red);
+    }
   }
 
   Future<void> _saveFile(Message message) async {
@@ -669,10 +697,24 @@ class _ClientScreenState extends State<ClientScreen> {
             ),
             if (message.type == MessageType.file && message.fileName != null) ...[
               const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: () => _saveFile(message),
-                icon: const Icon(Icons.save),
-                label: Text('${message.fileName} - Kaydet'),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => _saveFile(message),
+                    icon: const Icon(Icons.save, size: 18),
+                    label: const Text('Kaydet'),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: () => _saveAndOpenFile(message),
+                    icon: const Icon(Icons.open_in_new, size: 18),
+                    label: const Text('Aç'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
               ),
             ],
           ],
