@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:intl/intl.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../models/message.dart';
 import '../models/room.dart';
@@ -91,6 +92,9 @@ class _ClientScreenState extends State<ClientScreen> {
   }
 
   void _handleNewMessage(Message message) {
+    // Windows'ta taskbar'da yanıp sön ve pencereyi ön plana getir
+    _showWindowsNotification(message);
+
     switch (message.type) {
       case MessageType.alert:
         _playAlertSound();
@@ -106,6 +110,23 @@ class _ClientScreenState extends State<ClientScreen> {
       case MessageType.text:
         _playNotificationSound();
         break;
+    }
+  }
+
+  Future<void> _showWindowsNotification(Message message) async {
+    if (Platform.isWindows) {
+      // Taskbar'da yanıp sön
+      await windowManager.setAlwaysOnTop(true);
+      await Future.delayed(const Duration(milliseconds: 100));
+      await windowManager.setAlwaysOnTop(false);
+
+      // Pencereyi ön plana getir
+      await windowManager.focus();
+
+      // Eğer minimize ise restore et
+      if (await windowManager.isMinimized()) {
+        await windowManager.restore();
+      }
     }
   }
 
@@ -342,7 +363,7 @@ class _ClientScreenState extends State<ClientScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Okul Mesajlaşma Sistemi - Kurulum'),
+        title: const Text('Karabağ H.Ö.Akarsel Ortaokulu - Kurulum'),
         backgroundColor: Colors.teal,
         foregroundColor: Colors.white,
       ),
@@ -459,6 +480,38 @@ class _ClientScreenState extends State<ClientScreen> {
               ],
             ),
           ),
+          if (_messages.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.delete_sweep),
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('Mesajları Temizle'),
+                    content: const Text('Tüm mesajlar silinecek. Emin misiniz?'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        child: const Text('İptal'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () {
+                          setState(() => _messages.clear());
+                          Navigator.of(ctx).pop();
+                          _showSnackBar('Mesajlar temizlendi', Colors.blue);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: const Text('Temizle'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+              tooltip: 'Mesajları Temizle',
+            ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: _showSettings,

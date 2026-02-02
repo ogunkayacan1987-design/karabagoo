@@ -199,7 +199,7 @@ class _AdminScreenState extends State<AdminScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Okul Mesajlaşma Sistemi - Yönetim Paneli'),
+        title: const Text('Karabağ H.Ö.Akarsel Ortaokulu - Yönetim'),
         backgroundColor: Colors.indigo,
         foregroundColor: Colors.white,
         actions: [
@@ -449,12 +449,31 @@ class _AdminScreenState extends State<AdminScreen> {
                         const SizedBox(height: 24),
 
                         // Gönderilen mesajlar
-                        const Text(
-                          'Gönderilen Mesajlar',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Gönderilen Mesajlar',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            if (_sentMessages.isNotEmpty)
+                              TextButton.icon(
+                                onPressed: () {
+                                  setState(() {
+                                    _sentMessages.clear();
+                                  });
+                                  _showSnackBar('Mesajlar temizlendi', Colors.blue);
+                                },
+                                icon: const Icon(Icons.delete_sweep, size: 20),
+                                label: const Text('Temizle'),
+                                style: TextButton.styleFrom(
+                                  foregroundColor: Colors.red,
+                                ),
+                              ),
+                          ],
                         ),
                         const SizedBox(height: 8),
                         Expanded(

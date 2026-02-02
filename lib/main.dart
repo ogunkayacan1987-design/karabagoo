@@ -19,7 +19,7 @@ void main() async {
       backgroundColor: Colors.transparent,
       skipTaskbar: false,
       titleBarStyle: TitleBarStyle.normal,
-      title: 'Okul Mesajlaşma Sistemi',
+      title: 'Karabağ H.Ö.Akarsel Ortaokulu - Mesajlaşma',
     );
 
     windowManager.waitUntilReadyToShow(windowOptions, () async {
@@ -38,7 +38,7 @@ class OkulMesajlasmaApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Okul Mesajlaşma Sistemi',
+      title: 'Karabağ H.Ö.Akarsel Ortaokulu - Mesajlaşma',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.indigo,
@@ -53,8 +53,79 @@ class OkulMesajlasmaApp extends StatelessWidget {
 }
 
 /// Başlangıç ekranı - Admin veya İstemci modu seçimi
-class ModeSelectionScreen extends StatelessWidget {
+class ModeSelectionScreen extends StatefulWidget {
   const ModeSelectionScreen({super.key});
+
+  @override
+  State<ModeSelectionScreen> createState() => _ModeSelectionScreenState();
+}
+
+class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
+  final _passwordController = TextEditingController();
+  static const String _adminPassword = '6731213';
+
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  void _showPasswordDialog() {
+    _passwordController.clear();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.lock, color: Colors.indigo[700]),
+            const SizedBox(width: 12),
+            const Text('Yönetim Girişi'),
+          ],
+        ),
+        content: TextField(
+          controller: _passwordController,
+          obscureText: true,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Şifre',
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.password),
+          ),
+          onSubmitted: (_) => _checkPassword(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('İptal'),
+          ),
+          ElevatedButton(
+            onPressed: _checkPassword,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.indigo,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Giriş'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _checkPassword() {
+    if (_passwordController.text == _adminPassword) {
+      Navigator.of(context).pop(); // Dialog'u kapat
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const AdminScreen()),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Hatalı şifre!'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -97,10 +168,20 @@ class ModeSelectionScreen extends StatelessWidget {
 
                   // Başlık
                   const Text(
+                    'Karabağ Hatipoğlu Ömer Akarsel\nOrtaokulu',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
                     'Okul Mesajlaşma Sistemi',
                     style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.indigo,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -125,13 +206,7 @@ class ModeSelectionScreen extends StatelessWidget {
                           title: 'Yönetim Paneli',
                           subtitle: 'Mesaj ve dosya gönderin',
                           color: Colors.indigo,
-                          onTap: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const AdminScreen(),
-                              ),
-                            );
-                          },
+                          onTap: _showPasswordDialog,
                         ),
                       ),
                       const SizedBox(width: 24),
