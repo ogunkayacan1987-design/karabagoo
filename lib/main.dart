@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'screens/admin_screen.dart';
 import 'screens/client_screen.dart';
+import 'screens/license_screen.dart';
+import 'services/license_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,7 +49,134 @@ class OkulMesajlasmaApp extends StatelessWidget {
         useMaterial3: true,
         fontFamily: 'Segoe UI',
       ),
-      home: const ModeSelectionScreen(),
+      home: const LicenseCheckWrapper(),
+    );
+  }
+}
+
+/// Lisans kontrolü wrapper'ı
+class LicenseCheckWrapper extends StatefulWidget {
+  const LicenseCheckWrapper({super.key});
+
+  @override
+  State<LicenseCheckWrapper> createState() => _LicenseCheckWrapperState();
+}
+
+class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> {
+  LicenseInfo? _licenseInfo;
+  bool _isChecking = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkLicense();
+  }
+
+  Future<void> _checkLicense() async {
+    final info = await LicenseService.checkLicense();
+    setState(() {
+      _licenseInfo = info;
+      _isChecking = false;
+    });
+  }
+
+  void _onLicenseValid() {
+    _checkLicense();
+  }
+
+  void _onNewLicense() async {
+    await LicenseService.clearLicense();
+    setState(() {
+      _licenseInfo = LicenseInfo(status: LicenseStatus.notFound);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isChecking) {
+      return const Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Lisans kontrol ediliyor...'),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final info = _licenseInfo!;
+
+    switch (info.status) {
+      case LicenseStatus.notFound:
+      case LicenseStatus.invalid:
+        return LicenseEntryScreen(onLicenseValid: _onLicenseValid);
+
+      case LicenseStatus.expired:
+        return LicenseExpiredScreen(
+          licenseInfo: info,
+          onNewLicense: _onNewLicense,
+        );
+
+      case LicenseStatus.expiringSoon:
+        // Uyarı banner'ı ile ana ekranı göster
+        return _buildWithWarningBanner(info);
+
+      case LicenseStatus.valid:
+        return const ModeSelectionScreen();
+    }
+  }
+
+  Widget _buildWithWarningBanner(LicenseInfo info) {
+    return Scaffold(
+      body: Column(
+        children: [
+          // Uyarı banner'ı
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.orange[600]!, Colors.orange[800]!],
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.warning_amber, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Lisans ${info.daysRemaining} gün içinde dolacak! Yenileme için geliştiriciyle iletişime geçin.',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () {
+                    // Uyarıyı geçici olarak kapat
+                    Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(
+                        builder: (_) => const ModeSelectionScreen(),
+                      ),
+                    );
+                  },
+                  child: const Text(
+                    'Tamam',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Ana ekran
+          const Expanded(child: ModeSelectionScreen()),
+        ],
+      ),
     );
   }
 }
