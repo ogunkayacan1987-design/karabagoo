@@ -142,59 +142,60 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
           ),
         ),
         child: Center(
-          child: Card(
-            elevation: 8,
-            margin: const EdgeInsets.all(32),
-            child: Container(
-              constraints: const BoxConstraints(maxWidth: 600),
-              padding: const EdgeInsets.all(48),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Logo/Icon
-                  Container(
-                    padding: const EdgeInsets.all(24),
-                    decoration: BoxDecoration(
-                      color: Colors.indigo[50],
-                      shape: BoxShape.circle,
+          child: SingleChildScrollView(
+            child: Card(
+              elevation: 8,
+              margin: const EdgeInsets.all(16),
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 500),
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Logo/Icon
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.indigo[50],
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.school,
+                        size: 40,
+                        color: Colors.indigo[700],
+                      ),
                     ),
-                    child: Icon(
-                      Icons.school,
-                      size: 64,
-                      color: Colors.indigo[700],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
+                    const SizedBox(height: 12),
 
-                  // Başlık
-                  const Text(
-                    'Karabağ Hatipoğlu Ömer Akarsel\nOrtaokulu',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
+                    // Başlık
+                    const Text(
+                      'Karabağ Hatipoğlu Ömer Akarsel Ortaokulu',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Okul Mesajlaşma Sistemi',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.indigo,
+                    const SizedBox(height: 2),
+                    const Text(
+                      'Okul Mesajlaşma Sistemi',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.indigo,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'WiFi tabanlı okul içi iletişim platformu',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.grey[600],
+                    const SizedBox(height: 4),
+                    Text(
+                      'WiFi tabanlı okul içi iletişim platformu',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                      textAlign: TextAlign.center,
                     ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 48),
+                    const SizedBox(height: 20),
 
                   // Mod seçim butonları
                   Row(
@@ -254,7 +255,8 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
                       ],
                     ),
                   ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -299,44 +301,45 @@ class _ModeCardState extends State<_ModeCard> {
           onTap: widget.onTap,
           borderRadius: BorderRadius.circular(16),
           child: Container(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: _isHovered ? widget.color.withOpacity(0.1) : Colors.grey[50],
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: _isHovered ? widget.color : Colors.grey[300]!,
                 width: 2,
               ),
             ),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
                     color: widget.color.withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(
                     widget.icon,
-                    size: 48,
+                    size: 32,
                     color: widget.color,
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 8),
                 Text(
                   widget.title,
                   style: TextStyle(
-                    fontSize: 18,
+                    fontSize: 14,
                     fontWeight: FontWeight.bold,
                     color: widget.color,
                   ),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 Text(
                   widget.subtitle,
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 11,
                     color: Colors.grey[600],
                   ),
                   textAlign: TextAlign.center,

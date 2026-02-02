@@ -298,8 +298,23 @@ class _ClientScreenState extends State<ClientScreen> {
       final file = File(filePath);
       await file.writeAsBytes(message.fileData!);
       _showSnackBar('Dosya kaydedildi: $filePath', Colors.green);
+
+      // PDF dosyasını otomatik aç
+      if (message.fileName!.toLowerCase().endsWith('.pdf')) {
+        await _openFile(filePath);
+      }
     } catch (e) {
       _showSnackBar('Dosya kaydedilemedi: $e', Colors.red);
+    }
+  }
+
+  Future<void> _openFile(String filePath) async {
+    try {
+      if (Platform.isWindows) {
+        await Process.run('cmd', ['/c', 'start', '', filePath]);
+      }
+    } catch (e) {
+      _showSnackBar('Dosya açılamadı: $e', Colors.orange);
     }
   }
 
@@ -516,6 +531,26 @@ class _ClientScreenState extends State<ClientScreen> {
             icon: const Icon(Icons.settings),
             onPressed: _showSettings,
             tooltip: 'Ayarlar',
+          ),
+          // Minimize butonu
+          IconButton(
+            icon: const Icon(Icons.minimize),
+            onPressed: () async {
+              if (Platform.isWindows) {
+                await windowManager.minimize();
+              }
+            },
+            tooltip: 'Simge Durumuna Küçült',
+          ),
+          // Kapat butonu
+          IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () async {
+              if (Platform.isWindows) {
+                await windowManager.close();
+              }
+            },
+            tooltip: 'Kapat',
           ),
         ],
       ),
