@@ -22,8 +22,8 @@ Name: "desktopicon"; Description: "Masaustune kisayol olustur"; GroupDescription
 Source: "..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Okul Mesajlasma Sistemi"; Filename: "{app}\karabagoo.exe"
-Name: "{autodesktop}\Okul Mesajlasma Sistemi"; Filename: "{app}\karabagoo.exe"; Tasks: desktopicon
+Name: "{group}\Okul Mesajlasma Sistemi"; Filename: "{app}\okul_mesajlasma.exe"
+Name: "{autodesktop}\Okul Mesajlasma Sistemi"; Filename: "{app}\okul_mesajlasma.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\karabagoo.exe"; Description: "Programi baslat"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\okul_mesajlasma.exe"; Description: "Programi baslat"; Flags: nowait postinstall skipifsilent
