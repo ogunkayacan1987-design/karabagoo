@@ -1,235 +1,482 @@
-import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
-import 'package:flutter_tts/flutter_tts.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:window_manager/window_manager.dart';
+import 'dart:io';
 
-void main() {
-  runApp(const SpeedGuardApp());
+import 'screens/admin_screen.dart';
+import 'screens/client_screen.dart';
+import 'screens/license_screen.dart';
+import 'services/license_service.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Windows için pencere ayarları
+  if (Platform.isWindows) {
+    await windowManager.ensureInitialized();
+
+    WindowOptions windowOptions = const WindowOptions(
+      size: Size(1200, 800),
+      minimumSize: Size(800, 600),
+      center: true,
+      backgroundColor: Colors.transparent,
+      skipTaskbar: false,
+      titleBarStyle: TitleBarStyle.normal,
+      title: 'Karabağ H.Ö.Akarsel Ortaokulu - Mesajlaşma',
+    );
+
+    windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+  }
+
+  runApp(const OkulMesajlasmaApp());
 }
 
-class SpeedGuardApp extends StatelessWidget {
-  const SpeedGuardApp({super.key});
+class OkulMesajlasmaApp extends StatelessWidget {
+  const OkulMesajlasmaApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'SpeedGuard',
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: Colors.black,
+      title: 'Karabağ H.Ö.Akarsel Ortaokulu - Mesajlaşma',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.indigo,
+          brightness: Brightness.light,
+        ),
+        useMaterial3: true,
+        fontFamily: 'Segoe UI',
       ),
-      home: const DashboardScreen(),
+      home: const LicenseCheckWrapper(),
     );
   }
 }
 
-class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+/// Lisans kontrolü wrapper'ı
+class LicenseCheckWrapper extends StatefulWidget {
+  const LicenseCheckWrapper({super.key});
 
   @override
-  State<DashboardScreen> createState() => _DashboardScreenState();
+  State<LicenseCheckWrapper> createState() => _LicenseCheckWrapperState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
-  double _currentSpeedKmH = 0;
-  int _speedLimitKmH = 50; // Default limit
-  bool _isOverspeeding = false;
-  FlutterTts _flutterTts = FlutterTts();
-  Timer? _limitUpdateTimer;
-  StreamSubscription<Position>? _positionStream;
-  DateTime _lastAlertTime = DateTime.now();
+class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> {
+  LicenseInfo? _licenseInfo;
+  bool _isChecking = true;
 
   @override
   void initState() {
     super.initState();
-    _initApp();
+    _checkLicense();
   }
 
-  Future<void> _initApp() async {
-    // Keep screen on
-    await WakelockPlus.enable();
-
-    // Setup TTS
-    await _flutterTts.setLanguage("tr-TR");
-    await _flutterTts.setSpeechRate(0.5);
-
-    // Request permissions
-    Map<Permission, PermissionStatus> statuses = await [
-      Permission.location,
-    ].request();
-
-    if (statuses[Permission.location]!.isGranted) {
-      _startTracking();
-    }
-  }
-
-  void _startTracking() {
-    // Location Settings
-    const LocationSettings locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 0,
-    );
-
-    _positionStream = Geolocator.getPositionStream(locationSettings: locationSettings)
-        .listen((Position position) {
-      _updateSpeed(position);
-      // Periodic speed limit check (throttled to avoid API spam, but user said "GPS refresh 1s", APi usage might be heavy if 1s.
-      // Optimizing: Check limit only if moved significantly or every few seconds.
-      // Requirement: "GPS 1 sec refresh". Limit logic: "Get limit using OSM".
-      // We will check limit every 5 seconds to be safe on free API, but update speed instantly.
-    });
-
-    _limitUpdateTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
-       Position? position = await Geolocator.getLastKnownPosition();
-       if (position != null) {
-         _fetchSpeedLimit(position.latitude, position.longitude);
-       }
-    });
-  }
-
-  void _updateSpeed(Position position) {
-    // speed is in m/s. Convert to km/h.
-    double speedKmH = (position.speed * 3.6);
-    if (speedKmH < 0) speedKmH = 0;
-
+  Future<void> _checkLicense() async {
+    final info = await LicenseService.checkLicense();
     setState(() {
-      _currentSpeedKmH = speedKmH;
-      _checkOverspeed();
+      _licenseInfo = info;
+      _isChecking = false;
     });
   }
 
-  Future<void> _fetchSpeedLimit(double lat, double lon) async {
-    // Overpass API to get maxspeed of nearest way
-    // Query: around 25m radius, look for ways with maxspeed.
-    final String query = """
-      [out:json];
-      way[maxspeed](around:25,$lat,$lon);
-      out tags;
-    """;
-    final String url = "https://overpass-api.de/api/interpreter?data=${Uri.encodeComponent(query)}";
-
-    try {
-      final response = await http.get(Uri.parse(url));
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['elements'] != null && data['elements'].isNotEmpty) {
-          // Parse maxspeed (can be "50", "30", "TR:urban" etc. Simplified parsing)
-          String? maxSpeedStr = data['elements'][0]['tags']['maxspeed'];
-          if (maxSpeedStr != null) {
-             int? limit = int.tryParse(maxSpeedStr);
-             if (limit != null) {
-               setState(() {
-                 _speedLimitKmH = limit;
-                 _checkOverspeed();
-               });
-             } else {
-               // Handle vague formats like "TR:urban" -> defaults?
-               // For minimal MVP, ignore complex tags.
-             }
-          }
-        }
-      }
-    } catch (e) {
-      // API Fail: keep previous or default
-      debugPrint("API Error: $e");
-    }
+  void _onLicenseValid() {
+    _checkLicense();
   }
 
-  void _checkOverspeed() {
-    bool over = _currentSpeedKmH > _speedLimitKmH;
-    if (over != _isOverspeeding) {
-      setState(() {
-        _isOverspeeding = over;
-      });
-    }
-
-    if (over) {
-      // Throttle voice alert to every 5 seconds
-      if (DateTime.now().difference(_lastAlertTime).inSeconds > 5) {
-        _flutterTts.speak("Hız sınırı aşıldı");
-        _lastAlertTime = DateTime.now();
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _positionStream?.cancel();
-    _limitUpdateTimer?.cancel();
-    WakelockPlus.disable();
-    super.dispose();
+  void _onNewLicense() async {
+    await LicenseService.clearLicense();
+    setState(() {
+      _licenseInfo = LicenseInfo(status: LicenseStatus.notFound);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    Color textColor = _isOverspeeding ? Colors.red : Colors.green;
+    if (_isChecking) {
+      return const Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Lisans kontrol ediliyor...'),
+            ],
+          ),
+        ),
+      );
+    }
 
+    final info = _licenseInfo!;
+
+    switch (info.status) {
+      case LicenseStatus.notFound:
+      case LicenseStatus.invalid:
+        return LicenseEntryScreen(onLicenseValid: _onLicenseValid);
+
+      case LicenseStatus.expired:
+        return LicenseExpiredScreen(
+          licenseInfo: info,
+          onNewLicense: _onNewLicense,
+        );
+
+      case LicenseStatus.expiringSoon:
+        // Uyarı banner'ı ile ana ekranı göster
+        return _buildWithWarningBanner(info);
+
+      case LicenseStatus.valid:
+        return const ModeSelectionScreen();
+    }
+  }
+
+  Widget _buildWithWarningBanner(LicenseInfo info) {
     return Scaffold(
-      body: Row(
+      body: Column(
         children: [
-          // Left: Current Speed
-          Expanded(
-            child: Container(
-              color: Colors.black,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    _currentSpeedKmH.toStringAsFixed(0),
-                    style: TextStyle(
-                      fontSize: 120, // Huge font
-                      fontWeight: FontWeight.bold,
-                      color: textColor,
+          // Uyarı banner'ı
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.orange[600]!, Colors.orange[800]!],
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.warning_amber, color: Colors.white),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Lisans ${info.daysRemaining} gün içinde dolacak! Yenileme için geliştiriciyle iletişime geçin.',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
-                  const Text(
-                    "KM/S",
-                    style: TextStyle(color: Colors.grey, fontSize: 20),
+                ),
+                TextButton(
+                  onPressed: () {
+                    // Uyarıyı geçici olarak kapat
+                    Navigator.of(context).pushReplacement(
+                      MaterialPageRoute(
+                        builder: (_) => const ModeSelectionScreen(),
+                      ),
+                    );
+                  },
+                  child: const Text(
+                    'Tamam',
+                    style: TextStyle(color: Colors.white),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
-          // Divider
-          Container(width: 2, color: Colors.grey[800]),
-          // Right: Speed Limit
-          Expanded(
-            child: Container(
-              color: Colors.black,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.red, width: 10),
-                      color: Colors.white,
+          // Ana ekran
+          const Expanded(child: ModeSelectionScreen()),
+        ],
+      ),
+    );
+  }
+}
 
-                    ),
-                    child: Text(
-                      _speedLimitKmH.toString(),
-                      style: const TextStyle(
-                        fontSize: 80,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  const Text(
-                    "SINIR",
-                    style: TextStyle(color: Colors.grey, fontSize: 20),
-                  ),
-                ],
-              ),
+/// Başlangıç ekranı - Admin veya İstemci modu seçimi
+class ModeSelectionScreen extends StatefulWidget {
+  const ModeSelectionScreen({super.key});
+
+  @override
+  State<ModeSelectionScreen> createState() => _ModeSelectionScreenState();
+}
+
+class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
+  final _passwordController = TextEditingController();
+  static const String _adminPassword = '6731213';
+
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  void _showPasswordDialog() {
+    _passwordController.clear();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.lock, color: Colors.indigo[700]),
+            const SizedBox(width: 12),
+            const Text('Yönetim Girişi'),
+          ],
+        ),
+        content: TextField(
+          controller: _passwordController,
+          obscureText: true,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Şifre',
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.password),
+          ),
+          onSubmitted: (_) => _checkPassword(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('İptal'),
+          ),
+          ElevatedButton(
+            onPressed: _checkPassword,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.indigo,
+              foregroundColor: Colors.white,
             ),
+            child: const Text('Giriş'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _checkPassword() {
+    if (_passwordController.text == _adminPassword) {
+      Navigator.of(context).pop(); // Dialog'u kapat
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const AdminScreen()),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Hatalı şifre!'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.indigo[400]!,
+              Colors.teal[400]!,
+            ],
+          ),
+        ),
+        child: Center(
+          child: SingleChildScrollView(
+            child: Card(
+              elevation: 8,
+              margin: const EdgeInsets.all(16),
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 500),
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Logo/Icon
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.indigo[50],
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.school,
+                        size: 40,
+                        color: Colors.indigo[700],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Başlık
+                    const Text(
+                      'Karabağ Hatipoğlu Ömer Akarsel Ortaokulu',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 2),
+                    const Text(
+                      'Okul Mesajlaşma Sistemi',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.indigo,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'WiFi tabanlı okul içi iletişim platformu',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 20),
+
+                  // Mod seçim butonları
+                  Row(
+                    children: [
+                      // Admin butonu
+                      Expanded(
+                        child: _ModeCard(
+                          icon: Icons.admin_panel_settings,
+                          title: 'Yönetim Paneli',
+                          subtitle: 'Mesaj ve dosya gönderin',
+                          color: Colors.indigo,
+                          onTap: _showPasswordDialog,
+                        ),
+                      ),
+                      const SizedBox(width: 24),
+                      // İstemci butonu
+                      Expanded(
+                        child: _ModeCard(
+                          icon: Icons.tv,
+                          title: 'Sınıf Ekranı',
+                          subtitle: 'Mesajları görüntüleyin',
+                          color: Colors.teal,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const ClientScreen(),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 32),
+
+                  // Bilgi
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.info_outline, color: Colors.blue[700]),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Yonetim Paneli: Ogretmenler odası veya mudur odasında\n'
+                            'Sınıf Ekranı: Akıllı tahtalarda çalıştırın',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.blue[900],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Mod seçim kartı widget'ı
+class _ModeCard extends StatefulWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _ModeCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  State<_ModeCard> createState() => _ModeCardState();
+}
+
+class _ModeCardState extends State<_ModeCard> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        transform: Matrix4.identity()..scale(_isHovered ? 1.02 : 1.0),
+        child: InkWell(
+          onTap: widget.onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _isHovered ? widget.color.withOpacity(0.1) : Colors.grey[50],
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: _isHovered ? widget.color : Colors.grey[300]!,
+                width: 2,
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: widget.color.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    widget.icon,
+                    size: 32,
+                    color: widget.color,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  widget.title,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: widget.color,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  widget.subtitle,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.grey[600],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
