@@ -4,6 +4,7 @@ enum MessageType {
   file,      // Dosya transferi
   alert,     // Acil duyuru
   call,      // Öğrenci çağrısı (örn: "8A'dan Ali gelsin")
+  shutdown,  // PC kapatma komutu
 }
 
 /// Mesaj önceliği

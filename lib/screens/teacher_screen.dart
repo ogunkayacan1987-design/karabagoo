@@ -2,68 +2,88 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 
 import '../models/message.dart';
 import '../models/room.dart';
 import '../services/network_service.dart';
-import '../services/password_service.dart';
 
-class AdminScreen extends StatefulWidget {
-  const AdminScreen({super.key});
+class TeacherScreen extends StatefulWidget {
+  const TeacherScreen({super.key});
 
   @override
-  State<AdminScreen> createState() => _AdminScreenState();
+  State<TeacherScreen> createState() => _TeacherScreenState();
 }
 
-class _AdminScreenState extends State<AdminScreen> {
-  final ServerService _server = ServerService();
+class _TeacherScreenState extends State<TeacherScreen> {
+  final ClientService _client = ClientService();
+  final TextEditingController _ipController = TextEditingController();
   final TextEditingController _messageController = TextEditingController();
   final TextEditingController _studentNameController = TextEditingController();
   final List<Message> _sentMessages = [];
   final List<Message> _receivedMessages = [];
   final Set<String> _selectedRooms = {};
 
-  String? _localIp;
-  bool _isLoading = false;
+  List<Map<String, dynamic>> _roomStatuses = [];
+  bool _isConnected = false;
+  bool _isConnecting = false;
+  bool _showSetup = true;
   bool _sendToAll = true;
+  bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _initServer();
+    _loadSettings();
+    _setupClient();
   }
 
-  Future<void> _initServer() async {
-    setState(() => _isLoading = true);
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedIp = prefs.getString('teacher_server_ip');
 
-    _server.onClientConnectionChanged = (roomId, isConnected) {
-      setState(() {});
+    if (savedIp != null) {
+      _ipController.text = savedIp;
+      setState(() => _showSetup = false);
+      _connect();
+    }
+  }
+
+  Future<void> _saveSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('teacher_server_ip', _ipController.text);
+  }
+
+  void _setupClient() {
+    _client.onConnectionChanged = (roomId, isConnected) {
+      setState(() {
+        _isConnected = isConnected;
+        _isConnecting = false;
+      });
       if (isConnected) {
-        _showSnackBar('$roomId baglandi', Colors.green);
+        _showSnackBar('Sunucuya baglandi', Colors.green);
       } else {
-        _showSnackBar('$roomId baglantisi koptu', Colors.orange);
+        _showSnackBar('Baglanti kesildi, yeniden baglaniliyor...', Colors.orange);
       }
     };
 
-    _server.onMessageReceived = (message) {
+    _client.onMessageReceived = (message) {
       setState(() {
         _receivedMessages.insert(0, message);
       });
     };
 
-    _server.onError = (error) {
-      _showSnackBar(error, Colors.red);
+    _client.onRoomStatusChanged = (rooms) {
+      setState(() {
+        _roomStatuses = rooms;
+      });
     };
 
-    _localIp = await _server.getLocalIpAddress();
-    final success = await _server.startServer();
-
-    setState(() => _isLoading = false);
-
-    if (success) {
-      _showSnackBar('Sunucu baslatildi: $_localIp:5555', Colors.green);
-    }
+    _client.onError = (error) {
+      _showSnackBar(error, Colors.red);
+      setState(() => _isConnecting = false);
+    };
   }
 
   void _showSnackBar(String message, Color color) {
@@ -81,19 +101,42 @@ class _AdminScreenState extends State<AdminScreen> {
     return DateTime.now().millisecondsSinceEpoch.toString();
   }
 
+  Future<void> _connect() async {
+    if (_ipController.text.isEmpty) {
+      _showSnackBar('Lutfen sunucu IP adresini girin', Colors.red);
+      return;
+    }
+
+    setState(() => _isConnecting = true);
+    await _saveSettings();
+
+    final room = Room(
+      id: 'ogretmenler',
+      name: 'Ogretmenler Odasi',
+      type: RoomType.teachersRoom,
+    );
+
+    await _client.connect(
+      _ipController.text.trim(),
+      5555,
+      room,
+      role: 'teacher',
+    );
+  }
+
   void _sendTextMessage() {
     if (_messageController.text.trim().isEmpty) return;
 
     final message = Message(
       id: _generateMessageId(),
-      senderId: 'admin',
-      senderName: 'Yonetim',
+      senderId: 'ogretmenler',
+      senderName: 'Ogretmenler Odasi',
       targetRooms: _sendToAll ? [] : _selectedRooms.toList(),
       type: MessageType.text,
       content: _messageController.text.trim(),
     );
 
-    _server.sendMessage(message);
+    _client.sendRelayMessage(message);
     setState(() {
       _sentMessages.insert(0, message);
     });
@@ -106,15 +149,15 @@ class _AdminScreenState extends State<AdminScreen> {
 
     final message = Message(
       id: _generateMessageId(),
-      senderId: 'admin',
-      senderName: 'Yonetim',
+      senderId: 'ogretmenler',
+      senderName: 'Ogretmenler Odasi',
       targetRooms: _sendToAll ? [] : _selectedRooms.toList(),
       type: MessageType.alert,
       priority: MessagePriority.urgent,
       content: _messageController.text.trim(),
     );
 
-    _server.sendMessage(message);
+    _client.sendRelayMessage(message);
     setState(() {
       _sentMessages.insert(0, message);
     });
@@ -131,14 +174,14 @@ class _AdminScreenState extends State<AdminScreen> {
 
     final message = Message(
       id: _generateMessageId(),
-      senderId: 'admin',
-      senderName: 'Yonetim',
+      senderId: 'ogretmenler',
+      senderName: 'Ogretmenler Odasi',
       targetRooms: _sendToAll ? [] : _selectedRooms.toList(),
       type: MessageType.call,
       content: _studentNameController.text.trim(),
     );
 
-    _server.sendMessage(message);
+    _client.sendRelayMessage(message);
     setState(() {
       _sentMessages.insert(0, message);
     });
@@ -164,8 +207,8 @@ class _AdminScreenState extends State<AdminScreen> {
 
       final message = Message(
         id: _generateMessageId(),
-        senderId: 'admin',
-        senderName: 'Yonetim',
+        senderId: 'ogretmenler',
+        senderName: 'Ogretmenler Odasi',
         targetRooms: _sendToAll ? [] : _selectedRooms.toList(),
         type: MessageType.file,
         content: 'Dosya gonderildi: ${file.name}',
@@ -174,7 +217,7 @@ class _AdminScreenState extends State<AdminScreen> {
         fileData: bytes,
       );
 
-      _server.sendMessage(message);
+      _client.sendRelayMessage(message);
       setState(() {
         _sentMessages.insert(0, message);
       });
@@ -186,137 +229,10 @@ class _AdminScreenState extends State<AdminScreen> {
     }
   }
 
-  /// PC kapatma komutu gonder
-  void _showShutdownDialog({String? roomId}) {
-    final targetText = roomId ?? 'TUM BILGISAYARLAR';
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.power_settings_new, color: Colors.red[700]),
-            const SizedBox(width: 12),
-            const Text('PC Kapatma'),
-          ],
-        ),
-        content: Text(
-          '$targetText kapatilacak. Emin misiniz?\n\n'
-          'Bu islem geri alinamaz!',
-          style: const TextStyle(fontSize: 16),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Iptal'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              if (roomId != null) {
-                _server.sendShutdownCommand([roomId]);
-                _showSnackBar('$roomId kapatma komutu gonderildi', Colors.red);
-              } else {
-                _server.sendShutdownCommand([]);
-                _showSnackBar('Tum bilgisayarlara kapatma komutu gonderildi', Colors.red);
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Kapat'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Sifre degistirme dialogu
-  void _showPasswordSettingsDialog() {
-    final adminPwController = TextEditingController();
-    final teacherPwController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.vpn_key, color: Colors.indigo[700]),
-            const SizedBox(width: 12),
-            const Text('Sifre Ayarlari'),
-          ],
-        ),
-        content: SizedBox(
-          width: 400,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: adminPwController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Yeni Yonetim Sifresi',
-                  hintText: 'Bos birakirsaniz degismez',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.admin_panel_settings),
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: teacherPwController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Yeni Ogretmen Sifresi',
-                  hintText: 'Bos birakirsaniz degismez',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.school),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              adminPwController.dispose();
-              teacherPwController.dispose();
-              Navigator.of(context).pop();
-            },
-            child: const Text('Iptal'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              bool changed = false;
-              if (adminPwController.text.isNotEmpty) {
-                await PasswordService.setAdminPassword(adminPwController.text);
-                changed = true;
-              }
-              if (teacherPwController.text.isNotEmpty) {
-                await PasswordService.setTeacherPassword(teacherPwController.text);
-                changed = true;
-              }
-              adminPwController.dispose();
-              teacherPwController.dispose();
-              if (!context.mounted) return;
-              Navigator.of(context).pop();
-              if (changed) {
-                _showSnackBar('Sifreler guncellendi', Colors.green);
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.indigo,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Kaydet'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   void dispose() {
-    _server.stopServer();
+    _client.disconnect();
+    _ipController.dispose();
     _messageController.dispose();
     _studentNameController.dispose();
     super.dispose();
@@ -324,39 +240,144 @@ class _AdminScreenState extends State<AdminScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final rooms = Room.getDefaultRooms()
-        .where((r) => r.type == RoomType.classroom)
-        .toList();
-    final connectedRoomIds = _server.connectedRooms.map((r) => r.id).toSet();
+    if (_showSetup) {
+      return _buildSetupScreen();
+    }
+    return _buildMainScreen();
+  }
+
+  Widget _buildSetupScreen() {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Ogretmen Girisi - Kurulum'),
+        backgroundColor: Colors.deepPurple,
+        foregroundColor: Colors.white,
+      ),
+      body: Center(
+        child: Card(
+          margin: const EdgeInsets.all(32),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 500),
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.school, color: Colors.deepPurple[700], size: 32),
+                    const SizedBox(width: 12),
+                    const Text(
+                      'Ogretmenler Odasi Baglantisi',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Yonetim bilgisayarinin IP adresini girin',
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+                const SizedBox(height: 24),
+                TextField(
+                  controller: _ipController,
+                  decoration: const InputDecoration(
+                    labelText: 'Sunucu IP Adresi',
+                    hintText: '192.168.1.100',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.computer),
+                  ),
+                ),
+                const SizedBox(height: 32),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _isConnecting
+                        ? null
+                        : () {
+                            setState(() => _showSetup = false);
+                            _connect();
+                          },
+                    icon: _isConnecting
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.link),
+                    label: Text(
+                      _isConnecting ? 'Baglaniliyor...' : 'Baglan',
+                      style: const TextStyle(fontSize: 18),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.deepPurple,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMainScreen() {
+    // Oda listesi: sunucudan gelen veya varsayilan
+    final rooms = _roomStatuses.isNotEmpty
+        ? _roomStatuses
+        : Room.getDefaultRooms()
+            .where((r) => r.type == RoomType.classroom)
+            .map((r) => {
+                  'id': r.id,
+                  'name': r.name,
+                  'type': r.type.index,
+                  'isOnline': false,
+                })
+            .toList();
+
+    final onlineCount = rooms.where((r) => r['isOnline'] == true).length;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Karabag H.O.Akarsel Ortaokulu - Yonetim'),
-        backgroundColor: Colors.indigo,
+        title: const Text('Ogretmenler Odasi - Mesaj Paneli'),
+        backgroundColor: Colors.deepPurple,
         foregroundColor: Colors.white,
         actions: [
-          if (_localIp != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Center(
-                child: Text(
-                  'IP: $_localIp:5555',
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ),
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            decoration: BoxDecoration(
+              color: _isConnected ? Colors.green : Colors.red,
+              borderRadius: BorderRadius.circular(16),
             ),
-          IconButton(
-            icon: const Icon(Icons.vpn_key),
-            onPressed: _showPasswordSettingsDialog,
-            tooltip: 'Sifre Ayarlari',
+            child: Row(
+              children: [
+                Icon(
+                  _isConnected ? Icons.wifi : Icons.wifi_off,
+                  size: 16,
+                  color: Colors.white,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  _isConnected ? 'Bagli' : 'Baglanti Yok',
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ],
+            ),
           ),
           IconButton(
-            icon: const Icon(Icons.power_settings_new),
-            onPressed: connectedRoomIds.isNotEmpty
-                ? () => _showShutdownDialog()
-                : null,
-            tooltip: 'Tum Bilgisayarlari Kapat',
-            color: Colors.red[200],
+            icon: const Icon(Icons.settings),
+            onPressed: () => setState(() => _showSetup = true),
+            tooltip: 'Ayarlar',
           ),
         ],
       ),
@@ -373,17 +394,17 @@ class _AdminScreenState extends State<AdminScreen> {
                     children: [
                       Container(
                         padding: const EdgeInsets.all(16),
-                        color: Colors.indigo[50],
+                        color: Colors.deepPurple[50],
                         child: Row(
                           children: [
-                            Icon(Icons.people, color: Colors.indigo[700]),
+                            Icon(Icons.people, color: Colors.deepPurple[700]),
                             const SizedBox(width: 8),
                             Text(
                               'Siniflar',
                               style: TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
-                                color: Colors.indigo[700],
+                                color: Colors.deepPurple[700],
                               ),
                             ),
                           ],
@@ -398,7 +419,7 @@ class _AdminScreenState extends State<AdminScreen> {
                             if (_sendToAll) _selectedRooms.clear();
                           });
                         },
-                        activeColor: Colors.indigo,
+                        activeColor: Colors.deepPurple,
                       ),
                       const Divider(),
                       Expanded(
@@ -406,15 +427,17 @@ class _AdminScreenState extends State<AdminScreen> {
                           itemCount: rooms.length,
                           itemBuilder: (context, index) {
                             final room = rooms[index];
-                            final isOnline = connectedRoomIds.contains(room.id);
-                            final isSelected = _selectedRooms.contains(room.id);
+                            final roomId = room['id'] as String;
+                            final roomName = room['name'] as String;
+                            final isOnline = room['isOnline'] as bool;
+                            final isSelected = _selectedRooms.contains(roomId);
 
                             return ListTile(
                               leading: Icon(
                                 Icons.meeting_room,
                                 color: isOnline ? Colors.green : Colors.grey,
                               ),
-                              title: Text(room.name),
+                              title: Text(roomName),
                               subtitle: Text(
                                 isOnline ? 'Cevrimici' : 'Cevrimdisi',
                                 style: TextStyle(
@@ -422,40 +445,23 @@ class _AdminScreenState extends State<AdminScreen> {
                                   fontSize: 12,
                                 ),
                               ),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (isOnline)
-                                    IconButton(
-                                      icon: Icon(Icons.power_settings_new,
-                                          color: Colors.red[300], size: 20),
-                                      onPressed: () =>
-                                          _showShutdownDialog(roomId: room.id),
-                                      tooltip: 'Bu PC\'yi Kapat',
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(),
-                                    ),
-                                  const SizedBox(width: 4),
-                                  if (!_sendToAll)
-                                    Checkbox(
+                              trailing: !_sendToAll
+                                  ? Checkbox(
                                       value: isSelected,
-                                      onChanged: isOnline
-                                          ? (value) {
-                                              setState(() {
-                                                if (value == true) {
-                                                  _selectedRooms.add(room.id);
-                                                } else {
-                                                  _selectedRooms.remove(room.id);
-                                                }
-                                              });
-                                            }
-                                          : null,
-                                      activeColor: Colors.indigo,
-                                    ),
-                                ],
-                              ),
+                                      onChanged: (value) {
+                                        setState(() {
+                                          if (value == true) {
+                                            _selectedRooms.add(roomId);
+                                          } else {
+                                            _selectedRooms.remove(roomId);
+                                          }
+                                        });
+                                      },
+                                      activeColor: Colors.deepPurple,
+                                    )
+                                  : null,
                               selected: isSelected,
-                              selectedTileColor: Colors.indigo[50],
+                              selectedTileColor: Colors.deepPurple[50],
                             );
                           },
                         ),
@@ -463,7 +469,7 @@ class _AdminScreenState extends State<AdminScreen> {
                       Padding(
                         padding: const EdgeInsets.all(16),
                         child: Text(
-                          'Bagli: ${connectedRoomIds.length}/${rooms.length}',
+                          'Cevrimici: $onlineCount/${rooms.length}',
                           style: TextStyle(
                             color: Colors.grey[600],
                             fontWeight: FontWeight.bold,
@@ -509,11 +515,11 @@ class _AdminScreenState extends State<AdminScreen> {
                                 Row(
                                   children: [
                                     ElevatedButton.icon(
-                                      onPressed: _sendTextMessage,
+                                      onPressed: _isConnected ? _sendTextMessage : null,
                                       icon: const Icon(Icons.send),
                                       label: const Text('Gonder'),
                                       style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.indigo,
+                                        backgroundColor: Colors.deepPurple,
                                         foregroundColor: Colors.white,
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 24, vertical: 12),
@@ -521,7 +527,7 @@ class _AdminScreenState extends State<AdminScreen> {
                                     ),
                                     const SizedBox(width: 12),
                                     ElevatedButton.icon(
-                                      onPressed: _sendAlert,
+                                      onPressed: _isConnected ? _sendAlert : null,
                                       icon: const Icon(Icons.warning),
                                       label: const Text('Acil Duyuru'),
                                       style: ElevatedButton.styleFrom(
@@ -533,7 +539,7 @@ class _AdminScreenState extends State<AdminScreen> {
                                     ),
                                     const SizedBox(width: 12),
                                     ElevatedButton.icon(
-                                      onPressed: _sendFile,
+                                      onPressed: _isConnected ? _sendFile : null,
                                       icon: const Icon(Icons.attach_file),
                                       label: const Text('Dosya Gonder'),
                                       style: ElevatedButton.styleFrom(
@@ -581,7 +587,7 @@ class _AdminScreenState extends State<AdminScreen> {
                                     ),
                                     const SizedBox(width: 16),
                                     ElevatedButton.icon(
-                                      onPressed: _callStudent,
+                                      onPressed: _isConnected ? _callStudent : null,
                                       icon: const Icon(Icons.person_search),
                                       label: const Text('Cagir'),
                                       style: ElevatedButton.styleFrom(
@@ -600,7 +606,7 @@ class _AdminScreenState extends State<AdminScreen> {
 
                         const SizedBox(height: 24),
 
-                        // Gelen mesajlar (ogretmenden)
+                        // Gelen mesajlar (yonetimden)
                         if (_receivedMessages.isNotEmpty) ...[
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -610,7 +616,7 @@ class _AdminScreenState extends State<AdminScreen> {
                                 style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.deepPurple,
+                                  color: Colors.indigo,
                                 ),
                               ),
                               TextButton.icon(
@@ -627,17 +633,24 @@ class _AdminScreenState extends State<AdminScreen> {
                           ),
                           const SizedBox(height: 4),
                           SizedBox(
-                            height: 120,
+                            height: 100,
                             child: Card(
                               elevation: 1,
-                              color: Colors.deepPurple[50],
-                              child: ListView.separated(
+                              color: Colors.indigo[50],
+                              child: ListView.builder(
                                 padding: const EdgeInsets.all(8),
                                 itemCount: _receivedMessages.length,
-                                separatorBuilder: (_, __) => const Divider(),
                                 itemBuilder: (context, index) {
                                   final msg = _receivedMessages[index];
-                                  return _buildMessageTile(msg, isReceived: true);
+                                  return ListTile(
+                                    dense: true,
+                                    leading: const Icon(Icons.message, size: 20),
+                                    title: Text(msg.content, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                    subtitle: Text(
+                                      '${msg.senderName} - ${DateFormat('HH:mm').format(msg.timestamp)}',
+                                      style: const TextStyle(fontSize: 11),
+                                    ),
+                                  );
                                 },
                               ),
                             ),
@@ -660,7 +673,6 @@ class _AdminScreenState extends State<AdminScreen> {
                               TextButton.icon(
                                 onPressed: () {
                                   setState(() => _sentMessages.clear());
-                                  _showSnackBar('Mesajlar temizlendi', Colors.blue);
                                 },
                                 icon: const Icon(Icons.delete_sweep, size: 20),
                                 label: const Text('Temizle'),
@@ -681,13 +693,30 @@ class _AdminScreenState extends State<AdminScreen> {
                                       style: TextStyle(color: Colors.grey),
                                     ),
                                   )
-                                : ListView.separated(
+                                : ListView.builder(
                                     padding: const EdgeInsets.all(8),
                                     itemCount: _sentMessages.length,
-                                    separatorBuilder: (_, __) => const Divider(),
                                     itemBuilder: (context, index) {
                                       final msg = _sentMessages[index];
-                                      return _buildMessageTile(msg);
+                                      return ListTile(
+                                        dense: true,
+                                        leading: Icon(
+                                          _getMessageIcon(msg.type),
+                                          color: _getMessageColor(msg.type),
+                                          size: 20,
+                                        ),
+                                        title: Text(
+                                          msg.type == MessageType.call
+                                              ? '${msg.content} cagrildi'
+                                              : msg.content,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        subtitle: Text(
+                                          '${msg.targetRooms.isEmpty ? "Tum Siniflar" : msg.targetRooms.join(", ")} - ${DateFormat('HH:mm').format(msg.timestamp)}',
+                                          style: const TextStyle(fontSize: 11),
+                                        ),
+                                      );
                                     },
                                   ),
                           ),
@@ -701,60 +730,33 @@ class _AdminScreenState extends State<AdminScreen> {
     );
   }
 
-  Widget _buildMessageTile(Message msg, {bool isReceived = false}) {
-    IconData icon;
-    Color color;
-    String typeText;
-
-    switch (msg.type) {
+  IconData _getMessageIcon(MessageType type) {
+    switch (type) {
       case MessageType.text:
-        icon = Icons.message;
-        color = Colors.indigo;
-        typeText = 'Mesaj';
-        break;
+        return Icons.message;
       case MessageType.alert:
-        icon = Icons.warning;
-        color = Colors.orange;
-        typeText = 'Acil Duyuru';
-        break;
+        return Icons.warning;
       case MessageType.call:
-        icon = Icons.person_search;
-        color = Colors.blue;
-        typeText = 'Ogrenci Cagrisi';
-        break;
+        return Icons.person_search;
       case MessageType.file:
-        icon = Icons.attach_file;
-        color = Colors.teal;
-        typeText = 'Dosya';
-        break;
+        return Icons.attach_file;
       case MessageType.shutdown:
-        icon = Icons.power_settings_new;
-        color = Colors.red;
-        typeText = 'PC Kapatma';
-        break;
+        return Icons.power_settings_new;
     }
+  }
 
-    final targetText = msg.targetRooms.isEmpty
-        ? 'Tum Siniflar'
-        : msg.targetRooms.join(', ');
-
-    return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: color.withOpacity(0.2),
-        child: Icon(icon, color: color, size: 20),
-      ),
-      title: Text(
-        msg.type == MessageType.call
-            ? '${msg.content} cagrildi'
-            : msg.content,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Text(
-        '${isReceived ? "${msg.senderName} - " : ""}$typeText - $targetText\n${DateFormat('HH:mm').format(msg.timestamp)}',
-        style: const TextStyle(fontSize: 12),
-      ),
-      isThreeLine: true,
-    );
+  Color _getMessageColor(MessageType type) {
+    switch (type) {
+      case MessageType.text:
+        return Colors.deepPurple;
+      case MessageType.alert:
+        return Colors.orange;
+      case MessageType.call:
+        return Colors.blue;
+      case MessageType.file:
+        return Colors.teal;
+      case MessageType.shutdown:
+        return Colors.red;
+    }
   }
 }

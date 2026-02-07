@@ -10,12 +10,14 @@ import '../models/room.dart';
 typedef MessageCallback = void Function(Message message);
 typedef ConnectionCallback = void Function(String roomId, bool isConnected);
 typedef ErrorCallback = void Function(String error);
+typedef RoomStatusCallback = void Function(List<Map<String, dynamic>> rooms);
 
 /// Sunucu servisi - Admin tarafında çalışır
 class ServerService {
   ServerSocket? _server;
   final Map<String, Socket> _connectedClients = {};
   final Map<String, Room> _rooms = {};
+  final Set<String> _teacherClients = {};
 
   MessageCallback? onMessageReceived;
   ConnectionCallback? onClientConnectionChanged;
@@ -54,6 +56,7 @@ class ServerService {
     }
     _connectedClients.clear();
     _rooms.clear();
+    _teacherClients.clear();
     await _server?.close();
     _server = null;
   }
@@ -86,6 +89,7 @@ class ServerService {
               roomId = json['roomId'] as String;
               final roomName = json['roomName'] as String;
               final roomType = RoomType.values[json['roomType'] as int];
+              final role = json['role'] as String? ?? 'client';
 
               _connectedClients[roomId!] = client;
               _rooms[roomId!] = Room(
@@ -97,18 +101,58 @@ class ServerService {
                 lastSeen: DateTime.now(),
               );
 
-              print('Oda kaydedildi: $roomName ($roomId)');
+              // Öğretmen ise kaydet
+              if (role == 'teacher') {
+                _teacherClients.add(roomId!);
+              }
+
+              print('Oda kaydedildi: $roomName ($roomId) [role: $role]');
               onClientConnectionChanged?.call(roomId!, true);
 
               // Kayıt onayı gönder
               _sendToClient(roomId!, {'type': 'registered', 'success': true});
+
+              // Öğretmene oda durumlarını gönder
+              if (role == 'teacher') {
+                _sendRoomStatusToTeachers();
+              }
             }
             // Mesaj alındı bildirimi
             else if (json['type'] == 'message_received') {
               final messageId = json['messageId'] as String;
               print('Mesaj alındı onayı: $messageId');
             }
-            // Normal mesaj
+            // Öğretmenden gelen mesaj relay
+            else if (json['type'] == 'relay_message') {
+              final message = Message.fromJson(json['data'] as Map<String, dynamic>);
+
+              // Hedef odalara ilet
+              if (message.targetRooms.isEmpty) {
+                // Tüm odalara gönder (öğretmen hariç)
+                for (var cRoomId in _connectedClients.keys) {
+                  if (cRoomId != roomId) {
+                    _sendToClient(cRoomId, {
+                      'type': 'message',
+                      'data': message.toJson(),
+                    });
+                  }
+                }
+              } else {
+                for (var targetRoom in message.targetRooms) {
+                  if (_connectedClients.containsKey(targetRoom) && targetRoom != roomId) {
+                    _sendToClient(targetRoom, {
+                      'type': 'message',
+                      'data': message.toJson(),
+                    });
+                  }
+                }
+              }
+
+              // Admin paneline bildir
+              onMessageReceived?.call(message);
+              print('Öğretmen mesajı relay edildi: ${message.content}');
+            }
+            // Normal mesaj (istemciden)
             else if (json['type'] == 'message') {
               final message = Message.fromJson(json['data'] as Map<String, dynamic>);
               onMessageReceived?.call(message);
@@ -133,6 +177,7 @@ class ServerService {
   void _handleClientDisconnection(String? roomId) {
     if (roomId != null) {
       _connectedClients.remove(roomId);
+      _teacherClients.remove(roomId);
       if (_rooms.containsKey(roomId)) {
         _rooms[roomId] = _rooms[roomId]!.copyWith(
           isOnline: false,
@@ -140,6 +185,46 @@ class ServerService {
         );
       }
       onClientConnectionChanged?.call(roomId, false);
+
+      // Öğretmenlere güncel oda durumunu gönder
+      _sendRoomStatusToTeachers();
+    }
+  }
+
+  /// Öğretmenlere oda durumu gönder
+  void _sendRoomStatusToTeachers() {
+    final roomStatusList = _rooms.values
+        .where((r) => !_teacherClients.contains(r.id))
+        .map((r) => {
+              'id': r.id,
+              'name': r.name,
+              'type': r.type.index,
+              'isOnline': r.isOnline,
+            })
+        .toList();
+
+    // Varsayılan odaları da ekle (bağlı olmayanlar)
+    final defaultRooms = Room.getDefaultRooms()
+        .where((r) => r.type == RoomType.classroom)
+        .toList();
+    for (var room in defaultRooms) {
+      if (!roomStatusList.any((r) => r['id'] == room.id)) {
+        roomStatusList.add({
+          'id': room.id,
+          'name': room.name,
+          'type': room.type.index,
+          'isOnline': false,
+        });
+      }
+    }
+
+    final data = {
+      'type': 'room_status',
+      'rooms': roomStatusList,
+    };
+
+    for (var teacherId in _teacherClients) {
+      _sendToClient(teacherId, data);
     }
   }
 
@@ -179,6 +264,26 @@ class ServerService {
     }
   }
 
+  /// Uzaktan PC kapatma komutu gönder
+  void sendShutdownCommand(List<String> targetRooms) {
+    final data = {'type': 'shutdown'};
+
+    if (targetRooms.isEmpty) {
+      // Tüm istemcilere gönder (öğretmenler dahil)
+      for (var roomId in _connectedClients.keys) {
+        _sendToClient(roomId, data);
+      }
+      print('Kapatma komutu tüm odalara gönderildi');
+    } else {
+      for (var roomId in targetRooms) {
+        if (_connectedClients.containsKey(roomId)) {
+          _sendToClient(roomId, data);
+          print('Kapatma komutu gönderildi: $roomId');
+        }
+      }
+    }
+  }
+
   /// Sunucunun IP adresini al
   Future<String?> getLocalIpAddress() async {
     try {
@@ -210,7 +315,7 @@ class ServerService {
   }
 }
 
-/// İstemci servisi - Sınıflarda çalışır
+/// İstemci servisi - Sınıflarda ve öğretmen odasında çalışır
 class ClientService {
   Socket? _socket;
   Room? _room;
@@ -221,11 +326,13 @@ class ClientService {
   MessageCallback? onMessageReceived;
   ConnectionCallback? onConnectionChanged;
   ErrorCallback? onError;
+  RoomStatusCallback? onRoomStatusChanged;
+  VoidCallback? onShutdownReceived;
 
   bool get isConnected => _socket != null;
 
   /// Sunucuya bağlan
-  Future<bool> connect(String serverAddress, int port, Room room) async {
+  Future<bool> connect(String serverAddress, int port, Room room, {String role = 'client'}) async {
     _serverAddress = serverAddress;
     _serverPort = port;
     _room = room;
@@ -267,6 +374,14 @@ class ClientService {
                   'type': 'message_received',
                   'messageId': message.id,
                 });
+              } else if (json['type'] == 'room_status') {
+                final rooms = (json['rooms'] as List)
+                    .map((r) => Map<String, dynamic>.from(r as Map))
+                    .toList();
+                onRoomStatusChanged?.call(rooms);
+              } else if (json['type'] == 'shutdown') {
+                print('Kapatma komutu alındı!');
+                onShutdownReceived?.call();
               }
             }
           } catch (e) {
@@ -289,12 +404,13 @@ class ClientService {
         'roomId': room.id,
         'roomName': room.name,
         'roomType': room.type.index,
+        'role': role,
       });
 
       return true;
     } catch (e) {
       onError?.call('Bağlantı hatası: $e');
-      _scheduleReconnect();
+      _scheduleReconnect(role);
       return false;
     }
   }
@@ -304,16 +420,16 @@ class ClientService {
     _socket?.destroy();
     _socket = null;
     onConnectionChanged?.call(_room?.id ?? '', false);
-    _scheduleReconnect();
+    _scheduleReconnect('client');
   }
 
   /// Yeniden bağlanmayı planla
-  void _scheduleReconnect() {
+  void _scheduleReconnect([String role = 'client']) {
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(const Duration(seconds: 5), () {
       if (_serverAddress != null && _room != null) {
         print('Yeniden bağlanılıyor...');
-        connect(_serverAddress!, _serverPort, _room!);
+        connect(_serverAddress!, _serverPort, _room!, role: role);
       }
     });
   }
@@ -340,6 +456,14 @@ class ClientService {
   void sendMessage(Message message) {
     _send({
       'type': 'message',
+      'data': message.toJson(),
+    });
+  }
+
+  /// Mesaj relay et (öğretmenden sunucu üzerinden tüm hedeflere)
+  void sendRelayMessage(Message message) {
+    _send({
+      'type': 'relay_message',
       'data': message.toJson(),
     });
   }

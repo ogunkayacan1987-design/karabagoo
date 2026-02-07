@@ -4,8 +4,10 @@ import 'dart:io';
 
 import 'screens/admin_screen.dart';
 import 'screens/client_screen.dart';
+import 'screens/teacher_screen.dart';
 import 'screens/license_screen.dart';
 import 'services/license_service.dart';
+import 'services/password_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,12 +23,14 @@ void main() async {
       backgroundColor: Colors.transparent,
       skipTaskbar: false,
       titleBarStyle: TitleBarStyle.normal,
-      title: 'Karabağ H.Ö.Akarsel Ortaokulu - Mesajlaşma',
+      title: 'Karabag H.O.Akarsel Ortaokulu - Mesajlasma',
     );
 
     windowManager.waitUntilReadyToShow(windowOptions, () async {
       await windowManager.show();
       await windowManager.focus();
+      // X butonuna basinca kapatma yerine minimize et
+      await windowManager.setPreventClose(true);
     });
   }
 
@@ -40,7 +44,7 @@ class OkulMesajlasmaApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Karabağ H.Ö.Akarsel Ortaokulu - Mesajlaşma',
+      title: 'Karabag H.O.Akarsel Ortaokulu - Mesajlasma',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.indigo,
@@ -54,7 +58,7 @@ class OkulMesajlasmaApp extends StatelessWidget {
   }
 }
 
-/// Lisans kontrolü wrapper'ı
+/// Lisans kontrolu wrapper
 class LicenseCheckWrapper extends StatefulWidget {
   const LicenseCheckWrapper({super.key});
 
@@ -62,14 +66,27 @@ class LicenseCheckWrapper extends StatefulWidget {
   State<LicenseCheckWrapper> createState() => _LicenseCheckWrapperState();
 }
 
-class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> {
+class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> with WindowListener {
   LicenseInfo? _licenseInfo;
   bool _isChecking = true;
 
   @override
   void initState() {
     super.initState();
+    windowManager.addListener(this);
     _checkLicense();
+  }
+
+  @override
+  void dispose() {
+    windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  // X butonuna basinca minimize et (kapatma)
+  @override
+  void onWindowClose() async {
+    await windowManager.minimize();
   }
 
   Future<void> _checkLicense() async {
@@ -122,7 +139,6 @@ class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> {
         );
 
       case LicenseStatus.expiringSoon:
-        // Uyarı banner'ı ile ana ekranı göster
         return _buildWithWarningBanner(info);
 
       case LicenseStatus.valid:
@@ -134,7 +150,6 @@ class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> {
     return Scaffold(
       body: Column(
         children: [
-          // Uyarı banner'ı
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -149,7 +164,7 @@ class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Lisans ${info.daysRemaining} gün içinde dolacak! Yenileme için geliştiriciyle iletişime geçin.',
+                    'Lisans ${info.daysRemaining} gun icinde dolacak! Yenileme icin gelistiriciyle iletisime gecin.',
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w500,
@@ -158,7 +173,6 @@ class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> {
                 ),
                 TextButton(
                   onPressed: () {
-                    // Uyarıyı geçici olarak kapat
                     Navigator.of(context).pushReplacement(
                       MaterialPageRoute(
                         builder: (_) => const ModeSelectionScreen(),
@@ -173,7 +187,6 @@ class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> {
               ],
             ),
           ),
-          // Ana ekran
           const Expanded(child: ModeSelectionScreen()),
         ],
       ),
@@ -181,7 +194,7 @@ class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> {
   }
 }
 
-/// Başlangıç ekranı - Admin veya İstemci modu seçimi
+/// Baslangic ekrani - Admin, Ogretmen veya Istemci modu secimi
 class ModeSelectionScreen extends StatefulWidget {
   const ModeSelectionScreen({super.key});
 
@@ -191,7 +204,6 @@ class ModeSelectionScreen extends StatefulWidget {
 
 class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
   final _passwordController = TextEditingController();
-  static const String _adminPassword = '6731213';
 
   @override
   void dispose() {
@@ -199,16 +211,19 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
     super.dispose();
   }
 
-  void _showPasswordDialog() {
+  void _showPasswordDialog({required bool isTeacher}) {
     _passwordController.clear();
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: Row(
           children: [
-            Icon(Icons.lock, color: Colors.indigo[700]),
+            Icon(
+              isTeacher ? Icons.school : Icons.lock,
+              color: isTeacher ? Colors.deepPurple[700] : Colors.indigo[700],
+            ),
             const SizedBox(width: 12),
-            const Text('Yönetim Girişi'),
+            Text(isTeacher ? 'Ogretmen Girisi' : 'Yonetim Girisi'),
           ],
         ),
         content: TextField(
@@ -216,40 +231,53 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
           obscureText: true,
           autofocus: true,
           decoration: const InputDecoration(
-            labelText: 'Şifre',
+            labelText: 'Sifre',
             border: OutlineInputBorder(),
             prefixIcon: Icon(Icons.password),
           ),
-          onSubmitted: (_) => _checkPassword(),
+          onSubmitted: (_) => _checkPassword(isTeacher: isTeacher),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('İptal'),
+            child: const Text('Iptal'),
           ),
           ElevatedButton(
-            onPressed: _checkPassword,
+            onPressed: () => _checkPassword(isTeacher: isTeacher),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.indigo,
+              backgroundColor: isTeacher ? Colors.deepPurple : Colors.indigo,
               foregroundColor: Colors.white,
             ),
-            child: const Text('Giriş'),
+            child: const Text('Giris'),
           ),
         ],
       ),
     );
   }
 
-  void _checkPassword() {
-    if (_passwordController.text == _adminPassword) {
-      Navigator.of(context).pop(); // Dialog'u kapat
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const AdminScreen()),
-      );
+  void _checkPassword({required bool isTeacher}) async {
+    final enteredPassword = _passwordController.text;
+    final correctPassword = isTeacher
+        ? await PasswordService.getTeacherPassword()
+        : await PasswordService.getAdminPassword();
+
+    if (enteredPassword == correctPassword) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      if (isTeacher) {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const TeacherScreen()),
+        );
+      } else {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const AdminScreen()),
+        );
+      }
     } else {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Hatalı şifre!'),
+          content: Text('Hatali sifre!'),
           backgroundColor: Colors.red,
         ),
       );
@@ -276,12 +304,11 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
               elevation: 8,
               margin: const EdgeInsets.all(16),
               child: Container(
-                constraints: const BoxConstraints(maxWidth: 500),
+                constraints: const BoxConstraints(maxWidth: 700),
                 padding: const EdgeInsets.all(24),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Logo/Icon
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
@@ -295,10 +322,8 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-
-                    // Başlık
                     const Text(
-                      'Karabağ Hatipoğlu Ömer Akarsel Ortaokulu',
+                      'Karabag Hatipoglu Omer Akarsel Ortaokulu',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
@@ -307,7 +332,7 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
                     ),
                     const SizedBox(height: 2),
                     const Text(
-                      'Okul Mesajlaşma Sistemi',
+                      'Okul Mesajlasma Sistemi',
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w500,
@@ -317,7 +342,7 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'WiFi tabanlı okul içi iletişim platformu',
+                      'WiFi tabanli okul ici iletisim platformu',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.grey[600],
@@ -326,64 +351,72 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
                     ),
                     const SizedBox(height: 20),
 
-                  // Mod seçim butonları
-                  Row(
-                    children: [
-                      // Admin butonu
-                      Expanded(
-                        child: _ModeCard(
-                          icon: Icons.admin_panel_settings,
-                          title: 'Yönetim Paneli',
-                          subtitle: 'Mesaj ve dosya gönderin',
-                          color: Colors.indigo,
-                          onTap: _showPasswordDialog,
-                        ),
-                      ),
-                      const SizedBox(width: 24),
-                      // İstemci butonu
-                      Expanded(
-                        child: _ModeCard(
-                          icon: Icons.tv,
-                          title: 'Sınıf Ekranı',
-                          subtitle: 'Mesajları görüntüleyin',
-                          color: Colors.teal,
-                          onTap: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const ClientScreen(),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 32),
-
-                  // Bilgi
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.blue[50],
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
+                    // 3 mod secim butonu
+                    Row(
                       children: [
-                        Icon(Icons.info_outline, color: Colors.blue[700]),
-                        const SizedBox(width: 12),
                         Expanded(
-                          child: Text(
-                            'Yonetim Paneli: Ogretmenler odası veya mudur odasında\n'
-                            'Sınıf Ekranı: Akıllı tahtalarda çalıştırın',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.blue[900],
-                            ),
+                          child: _ModeCard(
+                            icon: Icons.admin_panel_settings,
+                            title: 'Yonetim Paneli',
+                            subtitle: 'Mesaj gonderin ve yonetin',
+                            color: Colors.indigo,
+                            onTap: () => _showPasswordDialog(isTeacher: false),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: _ModeCard(
+                            icon: Icons.school,
+                            title: 'Ogretmen Girisi',
+                            subtitle: 'Ogretmenler odasi',
+                            color: Colors.deepPurple,
+                            onTap: () => _showPasswordDialog(isTeacher: true),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: _ModeCard(
+                            icon: Icons.tv,
+                            title: 'Sinif Ekrani',
+                            subtitle: 'Mesajlari goruntuleyin',
+                            color: Colors.teal,
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => const ClientScreen(),
+                                ),
+                              );
+                            },
                           ),
                         ),
                       ],
                     ),
-                  ),
+                    const SizedBox(height: 32),
+
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.blue[50],
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, color: Colors.blue[700]),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Yonetim Paneli: Mudur odasinda\n'
+                              'Ogretmen Girisi: Ogretmenler odasinda\n'
+                              'Sinif Ekrani: Akilli tahtalarda calistirin',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.blue[900],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -395,7 +428,6 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
   }
 }
 
-/// Mod seçim kartı widget'ı
 class _ModeCard extends StatefulWidget {
   final IconData icon;
   final String title;

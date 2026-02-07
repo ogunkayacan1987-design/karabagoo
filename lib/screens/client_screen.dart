@@ -50,7 +50,7 @@ class _ClientScreenState extends State<ClientScreen> {
       _selectedRoom = rooms.where((r) => r.id == savedRoomId).firstOrNull;
     }
 
-    // Eğer daha önce ayarlar kaydedilmişse otomatik bağlan
+    // Eger daha once ayarlar kaydedilmisse otomatik baglan
     if (savedIp != null && _selectedRoom != null) {
       setState(() => _showSetup = false);
       _connect();
@@ -72,9 +72,9 @@ class _ClientScreenState extends State<ClientScreen> {
         _isConnecting = false;
       });
       if (isConnected) {
-        _showSnackBar('Sunucuya bağlandı', Colors.green);
+        _showSnackBar('Sunucuya baglandi', Colors.green);
       } else {
-        _showSnackBar('Bağlantı kesildi, yeniden bağlanılıyor...', Colors.orange);
+        _showSnackBar('Baglanti kesildi, yeniden baglaniliyor...', Colors.orange);
       }
     };
 
@@ -89,10 +89,14 @@ class _ClientScreenState extends State<ClientScreen> {
       _showSnackBar(error, Colors.red);
       setState(() => _isConnecting = false);
     };
+
+    // Uzaktan kapatma komutu
+    _client.onShutdownReceived = () {
+      _handleShutdown();
+    };
   }
 
   void _handleNewMessage(Message message) {
-    // Windows'ta taskbar'da yanıp sön ve pencereyi ön plana getir
     _showWindowsNotification(message);
 
     switch (message.type) {
@@ -110,20 +114,67 @@ class _ClientScreenState extends State<ClientScreen> {
       case MessageType.text:
         _playNotificationSound();
         break;
+      case MessageType.shutdown:
+        _handleShutdown();
+        break;
+    }
+  }
+
+  /// Uzaktan PC kapatma
+  void _handleShutdown() async {
+    // Kullaniciya 30 saniye sure ver
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.red[50],
+        title: Row(
+          children: [
+            Icon(Icons.power_settings_new, color: Colors.red[700], size: 32),
+            const SizedBox(width: 12),
+            Text(
+              'BILGISAYAR KAPANACAK',
+              style: TextStyle(
+                color: Colors.red[700],
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Yonetim tarafindan kapatma komutu gonderildi.\n\n'
+          'Bilgisayar 30 saniye icinde kapanacak.',
+          style: TextStyle(fontSize: 18),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Tamam'),
+          ),
+        ],
+      ),
+    );
+
+    // Windows'u kapat (30 saniye sonra)
+    if (Platform.isWindows) {
+      await Process.run('shutdown', ['/s', '/t', '30', '/c', 'Okul yonetimi tarafindan kapatma komutu gonderildi.']);
     }
   }
 
   Future<void> _showWindowsNotification(Message message) async {
     if (Platform.isWindows) {
-      // Taskbar'da yanıp sön
       await windowManager.setAlwaysOnTop(true);
       await Future.delayed(const Duration(milliseconds: 100));
       await windowManager.setAlwaysOnTop(false);
-
-      // Pencereyi ön plana getir
       await windowManager.focus();
 
-      // Eğer minimize ise restore et
       if (await windowManager.isMinimized()) {
         await windowManager.restore();
       }
@@ -134,8 +185,7 @@ class _ClientScreenState extends State<ClientScreen> {
     try {
       await _audioPlayer.play(AssetSource('sounds/alert.mp3'));
     } catch (e) {
-      // Ses dosyası yoksa Windows sistem sesi çal
-      print('Uyarı sesi çalınamadı: $e');
+      print('Uyari sesi calinamadi: $e');
     }
   }
 
@@ -143,7 +193,7 @@ class _ClientScreenState extends State<ClientScreen> {
     try {
       await _audioPlayer.play(AssetSource('sounds/notification.mp3'));
     } catch (e) {
-      print('Bildirim sesi çalınamadı: $e');
+      print('Bildirim sesi calinamadi: $e');
     }
   }
 
@@ -158,7 +208,7 @@ class _ClientScreenState extends State<ClientScreen> {
             Icon(Icons.warning, color: Colors.orange[700], size: 32),
             const SizedBox(width: 12),
             Text(
-              'ACİL DUYURU',
+              'ACIL DUYURU',
               style: TextStyle(
                 color: Colors.orange[700],
                 fontWeight: FontWeight.bold,
@@ -168,9 +218,20 @@ class _ClientScreenState extends State<ClientScreen> {
         ),
         content: Container(
           constraints: const BoxConstraints(minWidth: 400),
-          child: Text(
-            message.content,
-            style: const TextStyle(fontSize: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                message.content,
+                style: const TextStyle(fontSize: 24),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Gonderen: ${message.senderName}',
+                style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+              ),
+            ],
           ),
         ),
         actions: [
@@ -199,7 +260,7 @@ class _ClientScreenState extends State<ClientScreen> {
             Icon(Icons.person_search, color: Colors.blue[700], size: 32),
             const SizedBox(width: 12),
             Text(
-              'ÖĞRENCİ ÇAĞRISI',
+              'OGRENCI CAGRISI',
               style: TextStyle(
                 color: Colors.blue[700],
                 fontWeight: FontWeight.bold,
@@ -221,9 +282,9 @@ class _ClientScreenState extends State<ClientScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              const Text(
-                'Lütfen yönetim odasına gidin',
-                style: TextStyle(fontSize: 18, color: Colors.grey),
+              Text(
+                'Lutfen ${message.senderName == "Yonetim" ? "yonetim odasina" : "ogretmenler odasina"} gidin',
+                style: const TextStyle(fontSize: 18, color: Colors.grey),
               ),
             ],
           ),
@@ -251,7 +312,7 @@ class _ClientScreenState extends State<ClientScreen> {
           children: [
             Icon(Icons.attach_file, color: Colors.teal[700]),
             const SizedBox(width: 12),
-            const Text('Dosya Alındı'),
+            const Text('Dosya Alindi'),
           ],
         ),
         content: Column(
@@ -259,11 +320,12 @@ class _ClientScreenState extends State<ClientScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Dosya Adı: ${message.fileName}',
+              'Dosya Adi: ${message.fileName}',
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             if (message.fileSize != null)
               Text('Boyut: ${_formatFileSize(message.fileSize!)}'),
+            Text('Gonderen: ${message.senderName}'),
           ],
         ),
         actions: [
@@ -289,7 +351,7 @@ class _ClientScreenState extends State<ClientScreen> {
               _saveAndOpenFile(message);
             },
             icon: const Icon(Icons.open_in_new),
-            label: const Text('Aç'),
+            label: const Text('Ac'),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.blue,
               foregroundColor: Colors.white,
@@ -309,10 +371,10 @@ class _ClientScreenState extends State<ClientScreen> {
       final filePath = '${directory.path}/${message.fileName}';
       final file = File(filePath);
       await file.writeAsBytes(message.fileData!);
-      _showSnackBar('Dosya açılıyor...', Colors.blue);
+      _showSnackBar('Dosya aciliyor...', Colors.blue);
       await _openFile(filePath);
     } catch (e) {
-      _showSnackBar('Dosya açılamadı: $e', Colors.red);
+      _showSnackBar('Dosya acilamadi: $e', Colors.red);
     }
   }
 
@@ -327,7 +389,6 @@ class _ClientScreenState extends State<ClientScreen> {
       await file.writeAsBytes(message.fileData!);
       _showSnackBar('Dosya kaydedildi: $filePath', Colors.green);
 
-      // PDF dosyasını otomatik aç
       if (message.fileName!.toLowerCase().endsWith('.pdf')) {
         await _openFile(filePath);
       }
@@ -342,7 +403,7 @@ class _ClientScreenState extends State<ClientScreen> {
         await Process.run('cmd', ['/c', 'start', '', filePath]);
       }
     } catch (e) {
-      _showSnackBar('Dosya açılamadı: $e', Colors.orange);
+      _showSnackBar('Dosya acilamadi: $e', Colors.orange);
     }
   }
 
@@ -365,7 +426,7 @@ class _ClientScreenState extends State<ClientScreen> {
 
   Future<void> _connect() async {
     if (_ipController.text.isEmpty || _selectedRoom == null) {
-      _showSnackBar('Lütfen sunucu IP ve sınıf seçin', Colors.red);
+      _showSnackBar('Lutfen sunucu IP ve sinif secin', Colors.red);
       return;
     }
 
@@ -406,7 +467,7 @@ class _ClientScreenState extends State<ClientScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Karabağ H.Ö.Akarsel Ortaokulu - Kurulum'),
+        title: const Text('Karabag H.O.Akarsel Ortaokulu - Kurulum'),
         backgroundColor: Colors.teal,
         foregroundColor: Colors.white,
       ),
@@ -421,7 +482,7 @@ class _ClientScreenState extends State<ClientScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Bağlantı Ayarları',
+                  'Baglanti Ayarlari',
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.bold,
@@ -441,7 +502,7 @@ class _ClientScreenState extends State<ClientScreen> {
                 DropdownButtonFormField<Room>(
                   value: _selectedRoom,
                   decoration: const InputDecoration(
-                    labelText: 'Sınıf Seçin',
+                    labelText: 'Sinif Secin',
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.meeting_room),
                   ),
@@ -476,7 +537,7 @@ class _ClientScreenState extends State<ClientScreen> {
                           )
                         : const Icon(Icons.link),
                     label: Text(
-                      _isConnecting ? 'Bağlanıyor...' : 'Bağlan',
+                      _isConnecting ? 'Baglaniliyor...' : 'Baglan',
                       style: const TextStyle(fontSize: 18),
                     ),
                     style: ElevatedButton.styleFrom(
@@ -497,7 +558,7 @@ class _ClientScreenState extends State<ClientScreen> {
   Widget _buildMainScreen() {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_selectedRoom?.name ?? 'Sınıf'),
+        title: Text(_selectedRoom?.name ?? 'Sinif'),
         backgroundColor: _isConnected ? Colors.teal : Colors.grey,
         foregroundColor: Colors.white,
         actions: [
@@ -517,7 +578,7 @@ class _ClientScreenState extends State<ClientScreen> {
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  _isConnected ? 'Bağlı' : 'Bağlantı Yok',
+                  _isConnected ? 'Bagli' : 'Baglanti Yok',
                   style: const TextStyle(color: Colors.white),
                 ),
               ],
@@ -530,12 +591,12 @@ class _ClientScreenState extends State<ClientScreen> {
                 showDialog(
                   context: context,
                   builder: (ctx) => AlertDialog(
-                    title: const Text('Mesajları Temizle'),
-                    content: const Text('Tüm mesajlar silinecek. Emin misiniz?'),
+                    title: const Text('Mesajlari Temizle'),
+                    content: const Text('Tum mesajlar silinecek. Emin misiniz?'),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.of(ctx).pop(),
-                        child: const Text('İptal'),
+                        child: const Text('Iptal'),
                       ),
                       ElevatedButton(
                         onPressed: () {
@@ -553,7 +614,7 @@ class _ClientScreenState extends State<ClientScreen> {
                   ),
                 );
               },
-              tooltip: 'Mesajları Temizle',
+              tooltip: 'Mesajlari Temizle',
             ),
           IconButton(
             icon: const Icon(Icons.settings),
@@ -568,17 +629,7 @@ class _ClientScreenState extends State<ClientScreen> {
                 await windowManager.minimize();
               }
             },
-            tooltip: 'Simge Durumuna Küçült',
-          ),
-          // Kapat butonu
-          IconButton(
-            icon: const Icon(Icons.close),
-            onPressed: () async {
-              if (Platform.isWindows) {
-                await windowManager.close();
-              }
-            },
-            tooltip: 'Kapat',
+            tooltip: 'Simge Durumuna Kucult',
           ),
         ],
       ),
@@ -594,7 +645,7 @@ class _ClientScreenState extends State<ClientScreen> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'Henüz mesaj yok',
+                    'Henuz mesaj yok',
                     style: TextStyle(
                       fontSize: 20,
                       color: Colors.grey[400],
@@ -603,7 +654,7 @@ class _ClientScreenState extends State<ClientScreen> {
                   if (!_isConnected) ...[
                     const SizedBox(height: 8),
                     Text(
-                      'Sunucuya bağlanılıyor...',
+                      'Sunucuya baglaniliyor...',
                       style: TextStyle(
                         fontSize: 14,
                         color: Colors.grey[400],
@@ -633,17 +684,22 @@ class _ClientScreenState extends State<ClientScreen> {
       case MessageType.alert:
         cardColor = Colors.orange[50]!;
         icon = Icons.warning;
-        typeLabel = 'ACİL DUYURU';
+        typeLabel = 'ACIL DUYURU';
         break;
       case MessageType.call:
         cardColor = Colors.blue[50]!;
         icon = Icons.person_search;
-        typeLabel = 'ÖĞRENCİ ÇAĞRISI';
+        typeLabel = 'OGRENCI CAGRISI';
         break;
       case MessageType.file:
         cardColor = Colors.teal[50]!;
         icon = Icons.attach_file;
         typeLabel = 'DOSYA';
+        break;
+      case MessageType.shutdown:
+        cardColor = Colors.red[50]!;
+        icon = Icons.power_settings_new;
+        typeLabel = 'PC KAPATMA';
         break;
       case MessageType.text:
       default:
@@ -673,6 +729,15 @@ class _ClientScreenState extends State<ClientScreen> {
                     color: Colors.grey[700],
                   ),
                 ),
+                const SizedBox(width: 8),
+                Text(
+                  message.senderName,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.grey[500],
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
                 const Spacer(),
                 Text(
                   DateFormat('HH:mm').format(message.timestamp),
@@ -686,7 +751,7 @@ class _ClientScreenState extends State<ClientScreen> {
             const SizedBox(height: 12),
             Text(
               message.type == MessageType.call
-                  ? '${message.content} - Yönetim odasına gelmesi isteniyor'
+                  ? '${message.content} - ${message.senderName == "Yonetim" ? "Yonetim odasina" : "Ogretmenler odasina"} gelmesi isteniyor'
                   : message.content,
               style: TextStyle(
                 fontSize: message.type == MessageType.call ? 24 : 18,
@@ -708,7 +773,7 @@ class _ClientScreenState extends State<ClientScreen> {
                   ElevatedButton.icon(
                     onPressed: () => _saveAndOpenFile(message),
                     icon: const Icon(Icons.open_in_new, size: 18),
-                    label: const Text('Aç'),
+                    label: const Text('Ac'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue,
                       foregroundColor: Colors.white,
