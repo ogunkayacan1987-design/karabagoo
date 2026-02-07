@@ -101,8 +101,8 @@ class ServerService {
                 lastSeen: DateTime.now(),
               );
 
-              // Öğretmen ise kaydet
-              if (role == 'teacher') {
+              // Öğretmen veya mobil admin ise kaydet
+              if (role == 'teacher' || role == 'mobile_admin') {
                 _teacherClients.add(roomId!);
               }
 
@@ -112,8 +112,8 @@ class ServerService {
               // Kayıt onayı gönder
               _sendToClient(roomId!, {'type': 'registered', 'success': true});
 
-              // Öğretmene oda durumlarını gönder
-              if (role == 'teacher') {
+              // Öğretmene veya mobil admine oda durumlarını gönder
+              if (role == 'teacher' || role == 'mobile_admin') {
                 _sendRoomStatusToTeachers();
               }
             }
@@ -122,7 +122,13 @@ class ServerService {
               final messageId = json['messageId'] as String;
               print('Mesaj alındı onayı: $messageId');
             }
-            // Öğretmenden gelen mesaj relay
+            // Uzaktan kapatma relay (mobil admin)
+            else if (json['type'] == 'relay_shutdown') {
+              final targetRooms = List<String>.from(json['targetRooms'] as List);
+              sendShutdownCommand(targetRooms);
+              print('Mobil admin kapatma komutu relay edildi');
+            }
+            // Öğretmenden veya mobil adminden gelen mesaj relay
             else if (json['type'] == 'relay_message') {
               final message = Message.fromJson(json['data'] as Map<String, dynamic>);
 
@@ -460,11 +466,19 @@ class ClientService {
     });
   }
 
-  /// Mesaj relay et (öğretmenden sunucu üzerinden tüm hedeflere)
+  /// Mesaj relay et (öğretmenden/mobil adminden sunucu üzerinden tüm hedeflere)
   void sendRelayMessage(Message message) {
     _send({
       'type': 'relay_message',
       'data': message.toJson(),
+    });
+  }
+
+  /// Uzaktan kapatma komutu relay et (mobil admin icin)
+  void sendRelayShutdown(List<String> targetRooms) {
+    _send({
+      'type': 'relay_shutdown',
+      'targetRooms': targetRooms,
     });
   }
 }

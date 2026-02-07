@@ -5,6 +5,7 @@ import 'dart:io';
 import 'screens/admin_screen.dart';
 import 'screens/client_screen.dart';
 import 'screens/teacher_screen.dart';
+import 'screens/mobile_admin_screen.dart';
 import 'screens/license_screen.dart';
 import 'services/license_service.dart';
 import 'services/password_service.dart';
@@ -12,11 +13,20 @@ import 'services/password_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Windows için pencere ayarları
+  // Windows icin pencere ayarlari
   if (Platform.isWindows) {
+    await _initWindowManager();
+  }
+
+  runApp(const OkulMesajlasmaApp());
+}
+
+/// Windows pencere yoneticisini baslat
+Future<void> _initWindowManager() async {
+  try {
     await windowManager.ensureInitialized();
 
-    WindowOptions windowOptions = const WindowOptions(
+    const windowOptions = WindowOptions(
       size: Size(1200, 800),
       minimumSize: Size(800, 600),
       center: true,
@@ -29,12 +39,11 @@ void main() async {
     windowManager.waitUntilReadyToShow(windowOptions, () async {
       await windowManager.show();
       await windowManager.focus();
-      // X butonuna basinca kapatma yerine minimize et
       await windowManager.setPreventClose(true);
     });
+  } catch (e) {
+    print('Window manager baslatma hatasi: $e');
   }
-
-  runApp(const OkulMesajlasmaApp());
 }
 
 class OkulMesajlasmaApp extends StatelessWidget {
@@ -44,18 +53,20 @@ class OkulMesajlasmaApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Karabag H.O.Akarsel Ortaokulu - Mesajlasma',
+      title: _isMobile ? 'Okul Muduru' : 'Karabag H.O.Akarsel Ortaokulu - Mesajlasma',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.indigo,
           brightness: Brightness.light,
         ),
         useMaterial3: true,
-        fontFamily: 'Segoe UI',
+        fontFamily: Platform.isWindows ? 'Segoe UI' : null,
       ),
       home: const LicenseCheckWrapper(),
     );
   }
+
+  static bool get _isMobile => Platform.isAndroid || Platform.isIOS;
 }
 
 /// Lisans kontrolu wrapper
@@ -70,23 +81,31 @@ class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> with WindowLi
   LicenseInfo? _licenseInfo;
   bool _isChecking = true;
 
+  bool get _isMobile => Platform.isAndroid || Platform.isIOS;
+
   @override
   void initState() {
     super.initState();
-    windowManager.addListener(this);
+    if (Platform.isWindows) {
+      windowManager.addListener(this);
+    }
     _checkLicense();
   }
 
   @override
   void dispose() {
-    windowManager.removeListener(this);
+    if (Platform.isWindows) {
+      windowManager.removeListener(this);
+    }
     super.dispose();
   }
 
-  // X butonuna basinca minimize et (kapatma)
+  // X butonuna basinca minimize et (sadece Windows)
   @override
   void onWindowClose() async {
-    await windowManager.minimize();
+    if (Platform.isWindows) {
+      await windowManager.minimize();
+    }
   }
 
   Future<void> _checkLicense() async {
@@ -142,6 +161,10 @@ class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> with WindowLi
         return _buildWithWarningBanner(info);
 
       case LicenseStatus.valid:
+        // Mobil ise direkt admin sifre ekranini goster
+        if (_isMobile) {
+          return const MobileLoginScreen();
+        }
         return const ModeSelectionScreen();
     }
   }
@@ -164,7 +187,7 @@ class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> with WindowLi
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Lisans ${info.daysRemaining} gun icinde dolacak! Yenileme icin gelistiriciyle iletisime gecin.',
+                    'Lisans ${info.daysRemaining} gun icinde dolacak!',
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w500,
@@ -175,26 +198,166 @@ class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> with WindowLi
                   onPressed: () {
                     Navigator.of(context).pushReplacement(
                       MaterialPageRoute(
-                        builder: (_) => const ModeSelectionScreen(),
+                        builder: (_) => _isMobile
+                            ? const MobileLoginScreen()
+                            : const ModeSelectionScreen(),
                       ),
                     );
                   },
-                  child: const Text(
-                    'Tamam',
-                    style: TextStyle(color: Colors.white),
-                  ),
+                  child: const Text('Tamam', style: TextStyle(color: Colors.white)),
                 ),
               ],
             ),
           ),
-          const Expanded(child: ModeSelectionScreen()),
+          Expanded(
+            child: _isMobile
+                ? const MobileLoginScreen()
+                : const ModeSelectionScreen(),
+          ),
         ],
       ),
     );
   }
 }
 
-/// Baslangic ekrani - Admin, Ogretmen veya Istemci modu secimi
+// ==================== MOBiL GiRiS EKRANI ====================
+class MobileLoginScreen extends StatefulWidget {
+  const MobileLoginScreen({super.key});
+
+  @override
+  State<MobileLoginScreen> createState() => _MobileLoginScreenState();
+}
+
+class _MobileLoginScreenState extends State<MobileLoginScreen> {
+  final _passwordController = TextEditingController();
+  bool _isLoading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  void _login() async {
+    if (_passwordController.text.isEmpty) {
+      setState(() => _error = 'Lutfen sifre girin');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    final adminPw = await PasswordService.getAdminPassword();
+
+    if (_passwordController.text == adminPw) {
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const MobileAdminScreen()),
+      );
+    } else {
+      setState(() {
+        _isLoading = false;
+        _error = 'Hatali sifre!';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Colors.indigo[600]!, Colors.indigo[900]!],
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(32),
+              child: Card(
+                elevation: 8,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.indigo[50],
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(Icons.admin_panel_settings, size: 48, color: Colors.indigo[700]),
+                      ),
+                      const SizedBox(height: 20),
+                      const Text(
+                        'Okul Muduru',
+                        style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Karabag H.O. Akarsel Ortaokulu',
+                        style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 32),
+                      TextField(
+                        controller: _passwordController,
+                        obscureText: true,
+                        autofocus: true,
+                        decoration: InputDecoration(
+                          labelText: 'Yonetim Sifresi',
+                          border: const OutlineInputBorder(),
+                          prefixIcon: const Icon(Icons.lock),
+                          errorText: _error,
+                        ),
+                        style: const TextStyle(fontSize: 18),
+                        onSubmitted: (_) => _login(),
+                      ),
+                      const SizedBox(height: 24),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 52,
+                        child: ElevatedButton.icon(
+                          onPressed: _isLoading ? null : _login,
+                          icon: _isLoading
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                )
+                              : const Icon(Icons.login),
+                          label: Text(
+                            _isLoading ? 'Giris yapiliyor...' : 'Giris Yap',
+                            style: const TextStyle(fontSize: 18),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.indigo,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ==================== MASAUSTU MOD SECIM EKRANI ====================
 class ModeSelectionScreen extends StatefulWidget {
   const ModeSelectionScreen({super.key});
 
@@ -276,10 +439,7 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
     } else {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Hatali sifre!'),
-          backgroundColor: Colors.red,
-        ),
+        const SnackBar(content: Text('Hatali sifre!'), backgroundColor: Colors.red),
       );
     }
   }
@@ -292,10 +452,7 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Colors.indigo[400]!,
-              Colors.teal[400]!,
-            ],
+            colors: [Colors.indigo[400]!, Colors.teal[400]!],
           ),
         ),
         child: Center(
@@ -315,38 +472,24 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
                         color: Colors.indigo[50],
                         shape: BoxShape.circle,
                       ),
-                      child: Icon(
-                        Icons.school,
-                        size: 40,
-                        color: Colors.indigo[700],
-                      ),
+                      child: Icon(Icons.school, size: 40, color: Colors.indigo[700]),
                     ),
                     const SizedBox(height: 12),
                     const Text(
                       'Karabag Hatipoglu Omer Akarsel Ortaokulu',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 2),
                     const Text(
                       'Okul Mesajlasma Sistemi',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: Colors.indigo,
-                      ),
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.indigo),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'WiFi tabanli okul ici iletisim platformu',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                      ),
+                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 20),
@@ -382,9 +525,7 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
                             color: Colors.teal,
                             onTap: () {
                               Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => const ClientScreen(),
-                                ),
+                                MaterialPageRoute(builder: (_) => const ClientScreen()),
                               );
                             },
                           ),
@@ -408,10 +549,7 @@ class _ModeSelectionScreenState extends State<ModeSelectionScreen> {
                               'Yonetim Paneli: Mudur odasinda\n'
                               'Ogretmen Girisi: Ogretmenler odasinda\n'
                               'Sinif Ekrani: Akilli tahtalarda calistirin',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.blue[900],
-                              ),
+                              style: TextStyle(fontSize: 13, color: Colors.blue[900]),
                             ),
                           ),
                         ],
@@ -480,29 +618,18 @@ class _ModeCardState extends State<_ModeCard> {
                     color: widget.color.withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(
-                    widget.icon,
-                    size: 32,
-                    color: widget.color,
-                  ),
+                  child: Icon(widget.icon, size: 32, color: widget.color),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   widget.title,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: widget.color,
-                  ),
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: widget.color),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 2),
                 Text(
                   widget.subtitle,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.grey[600],
-                  ),
+                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                   textAlign: TextAlign.center,
                 ),
               ],

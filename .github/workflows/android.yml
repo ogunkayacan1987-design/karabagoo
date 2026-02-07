@@ -25,63 +25,63 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable' # Use latest stable version for best compatibility
-          
+          channel: 'stable'
+
       - name: Create Flutter Project Structure
         run: |
           # Clean start
           rm -rf android
-          
+
           # Enable Android
           flutter config --enable-android
-          
+
           # Generate in temp folder
-          flutter create temp_runner --org com.speedguard.app --project-name speedguard --template=app --platforms android
-          
+          flutter create temp_runner --org com.karabag.okulmesajlasma --project-name okul_mesajlasma --template=app --platforms android
+
           # Copy android folder to root
           cp -r temp_runner/android .
-          
+
           # Cleanup
           rm -rf temp_runner
-          
-          # Debug: List EVERYTHING in android to see what we got
+
           echo "Listing android directory structure:"
           ls -R android
 
-      - name: Configure Android Permissions and Fix Kotlin
+      - name: Configure Android App
         run: |
           # Inject permissions into AndroidManifest.xml
           MANIFEST=$(find android -name AndroidManifest.xml | head -n 1)
           if [ -z "$MANIFEST" ]; then
-            echo "AndroidManifest.xml not found! Check 'ls -R android' output above."
+            echo "AndroidManifest.xml not found!"
             exit 1
           fi
           echo "Injecting permissions into $MANIFEST"
-          PERMISSIONS='<uses-permission android:name="android.permission.INTERNET"/><uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/><uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/><uses-permission android:name="android.permission.WAKE_LOCK"/>'
+          PERMISSIONS='<uses-permission android:name="android.permission.INTERNET"/><uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/><uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/><uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/><uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>'
           sed -i "s|<application|$PERMISSIONS\n    <application|g" $MANIFEST
-          
+
+          # Set app label to OkulMuduru
+          sed -i 's/android:label="[^"]*"/android:label="Okul Muduru"/g' $MANIFEST
+
+          echo "=== AndroidManifest.xml ==="
+          cat $MANIFEST
+
           # Fix Kotlin Version
-          # Look for build.gradle or build.gradle.kts
           BUILD_GRADLE=$(find android -maxdepth 1 -name "build.gradle" -o -name "build.gradle.kts" | head -n 1)
-          
+
           if [ -z "$BUILD_GRADLE" ]; then
-             echo "build.gradle not found in android root! Trying recursive search..."
-             # Find any build.gradle that is NOT inside 'app' folder
              BUILD_GRADLE=$(find android -name "build.gradle" | grep -v "/app/" | head -n 1)
           fi
-          
+
           if [ -n "$BUILD_GRADLE" ]; then
               echo "Patching Kotlin version in: $BUILD_GRADLE"
-              # Check if it's KTS or Groovy and patch accordingly (Simple patch for Groovy, warning for KTS)
               if [[ "$BUILD_GRADLE" == *".kts" ]]; then
-                  echo "Warning: Kotlin DSL (kts) detected. Attempting generic patch..."
                   sed -i "/kotlin(\"android\")/c\    kotlin(\"android\") version \"1.9.23\"" $BUILD_GRADLE || true
               else
                   sed -i "/ext.kotlin_version/c\    ext.kotlin_version = '1.9.23'" $BUILD_GRADLE
               fi
               cat $BUILD_GRADLE
           else
-              echo "CRITICAL ERROR: Could not find android/build.gradle. One last check of root:"
+              echo "CRITICAL ERROR: Could not find android/build.gradle."
               ls -la android/
               exit 1
           fi
@@ -94,20 +94,20 @@ jobs:
         run: flutter build apk --release
 
       - name: Rename APK
-        run: mv build/app/outputs/flutter-apk/app-release.apk app-release.apk
+        run: mv build/app/outputs/flutter-apk/app-release.apk OkulMuduru.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
-          path: app-release.apk
+          name: OkulMuduru
+          path: OkulMuduru.apk
 
       - name: Create Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: Release v1.0.${{ github.run_number }}
-          files: app-release.apk
+          tag_name: v1.1.${{ github.run_number }}
+          name: Release v1.1.${{ github.run_number }}
+          files: OkulMuduru.apk
           draft: false
           prerelease: false
