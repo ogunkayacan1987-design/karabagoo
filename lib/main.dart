@@ -169,16 +169,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _fetchSpeedLimit(double lat, double lon) async {
-    // Overpass API: tüm yolları çek (maxspeed olsun olmasın), highway etiketiyle birlikte
+    // Overpass API: sadece araç yollarını çek (yaya/bisiklet yolları hariç)
     final String query = """
-      [out:json];
-      way[highway](around:30,$lat,$lon);
+      [out:json][timeout:10];
+      way[highway~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service)\$"](around:30,$lat,$lon);
       out tags;
     """;
     final String url = "https://overpass-api.de/api/interpreter?data=${Uri.encodeComponent(query)}";
 
     try {
-      final response = await http.get(Uri.parse(url));
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['elements'] != null && data['elements'].isNotEmpty) {
@@ -282,7 +282,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Text(
                     _currentSpeedKmH.toStringAsFixed(0),
                     style: TextStyle(
-                      fontSize: 120, // Huge font
+                      fontSize: 90,
                       fontWeight: FontWeight.bold,
                       color: textColor,
                     ),
@@ -315,7 +315,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     child: Text(
                       _speedLimitKmH.toString(),
                       style: const TextStyle(
-                        fontSize: 80,
+                        fontSize: 60,
                         fontWeight: FontWeight.bold,
                         color: Colors.black,
                       ),
