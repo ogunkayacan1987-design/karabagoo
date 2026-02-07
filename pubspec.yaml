@@ -1,5 +1,5 @@
-name: speedguard
-description: A minimal driving support application.
+name: okul_mesajlasma
+description: Okul içi WiFi tabanlı mesajlaşma ve dosya paylaşım sistemi.
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -9,11 +9,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  geolocator: ^11.0.0
-  http: ^1.2.0
-  flutter_tts: ^4.0.2
-  permission_handler: ^11.3.0
-  wakelock_plus: ^1.2.0
+  file_picker: ^6.1.1
+  path_provider: ^2.1.2
+  shared_preferences: ^2.2.2
+  intl: ^0.19.0
+  audioplayers: ^5.2.1
+  window_manager: ^0.3.8
 
 dev_dependencies:
   flutter_test:
