@@ -112,130 +112,66 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 'TR:motorway':
         return 120;
       default:
-        return -1; // Bilinmeyen etiket
-    }
-  }
-
-  // Yol tipine (highway) göre Türkiye varsayılan hız limitleri
-  int _defaultSpeedForHighway(String? highway) {
-    switch (highway) {
-      case 'motorway':
-      case 'motorway_link':
-        return 120;
-      case 'trunk':
-      case 'trunk_link':
-        return 110;
-      case 'primary':
-      case 'secondary':
-        return 90;
-      case 'tertiary':
-      case 'residential':
-      case 'living_street':
-      case 'service':
-      case 'unclassified':
-        return 50;
-      default:
-        return 50;
-    }
-  }
-
-  // Şehir içi yolları önceliklendir: düşük sıra = yüksek öncelik
-  int _roadPriority(String? highway) {
-    switch (highway) {
-      case 'residential':
-      case 'living_street':
-        return 0;
-      case 'service':
-        return 1;
-      case 'tertiary':
-      case 'tertiary_link':
-      case 'unclassified':
-        return 2;
-      case 'secondary':
-      case 'secondary_link':
-        return 3;
-      case 'primary':
-      case 'primary_link':
-        return 4;
-      case 'trunk':
-      case 'trunk_link':
-        return 5;
-      case 'motorway':
-      case 'motorway_link':
-        return 6;
-      default:
-        return 3;
+        return -1;
     }
   }
 
   Future<void> _fetchSpeedLimit(double lat, double lon) async {
-    // Overpass API: sadece araç yollarını çek (yaya/bisiklet yolları hariç)
     final String query = """
-      [out:json][timeout:10];
-      way[highway~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service)\$"](around:30,$lat,$lon);
+      [out:json];
+      way[maxspeed](around:25,$lat,$lon);
       out tags;
     """;
     final String url = "https://overpass-api.de/api/interpreter?data=${Uri.encodeComponent(query)}";
 
     try {
-      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
+      final response = await http.get(Uri.parse(url));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['elements'] != null && data['elements'].isNotEmpty) {
           final List elements = data['elements'];
 
-          // En uygun yolu bul: şehir içi yolları öncelikle
-          int bestLimit = -1;
-          int bestPriority = 999;
+          // Tüm yollardan en düşük hız limitini al (en güvenli)
+          int minLimit = 999;
 
           for (var element in elements) {
             final tags = element['tags'];
             if (tags == null) continue;
 
-            String? highway = tags['highway'];
             String? maxSpeedStr = tags['maxspeed'];
-            int priority = _roadPriority(highway);
+            if (maxSpeedStr == null) continue;
+
             int limit = -1;
 
-            if (maxSpeedStr != null) {
-              // Önce sayısal değer dene
-              int? numericLimit = int.tryParse(maxSpeedStr);
-              if (numericLimit != null) {
-                limit = numericLimit;
-              } else {
-                // TR:urban, TR:rural gibi etiketleri çözümle
-                limit = _resolveTurkishSpeedTag(maxSpeedStr);
-              }
+            // Önce sayısal değer dene
+            int? numericLimit = int.tryParse(maxSpeedStr);
+            if (numericLimit != null) {
+              limit = numericLimit;
+            } else {
+              // TR:urban, TR:rural gibi etiketleri çözümle
+              limit = _resolveTurkishSpeedTag(maxSpeedStr);
             }
 
-            // maxspeed etiketi yoksa veya ayrıştırılamadıysa, yol tipinden varsayılan kullan
-            if (limit <= 0) {
-              limit = _defaultSpeedForHighway(highway);
-            }
-
-            // Türkiye'de gerçekçi üst sınır: 120 km/h (otoyol)
-            // 130'un üzerindeki değerler hatalı veri
-            if (limit > 130) {
-              limit = 120;
-            }
-
-            // En yüksek öncelikli (en düşük priority değeri) yolu seç
-            if (priority < bestPriority) {
-              bestPriority = priority;
-              bestLimit = limit;
+            // Geçerli ve en düşük limiti seç
+            if (limit > 0 && limit < minLimit) {
+              minLimit = limit;
             }
           }
 
-          if (bestLimit > 0) {
+          // Türkiye'de max 120 km/h (otoyol), 130 üzeri hatalı veri
+          if (minLimit > 130) {
+            minLimit = 120;
+          }
+
+          if (minLimit > 0 && minLimit < 999) {
             setState(() {
-              _speedLimitKmH = bestLimit;
+              _speedLimitKmH = minLimit;
               _checkOverspeed();
             });
           }
         }
       }
     } catch (e) {
-      // API hatası: mevcut değeri koru
       debugPrint("API Error: $e");
     }
   }
