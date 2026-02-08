@@ -102,9 +102,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
+  // Türkiye yol tipi etiketlerine göre varsayılan hız limitleri
+  int _resolveTurkishSpeedTag(String tag) {
+    switch (tag) {
+      case 'TR:urban':
+        return 50;
+      case 'TR:rural':
+        return 90;
+      case 'TR:motorway':
+        return 120;
+      default:
+        return -1;
+    }
+  }
+
   Future<void> _fetchSpeedLimit(double lat, double lon) async {
-    // Overpass API to get maxspeed of nearest way
-    // Query: around 25m radius, look for ways with maxspeed.
     final String query = """
       [out:json];
       way[maxspeed](around:25,$lat,$lon);
@@ -117,24 +129,49 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['elements'] != null && data['elements'].isNotEmpty) {
-          // Parse maxspeed (can be "50", "30", "TR:urban" etc. Simplified parsing)
-          String? maxSpeedStr = data['elements'][0]['tags']['maxspeed'];
-          if (maxSpeedStr != null) {
-             int? limit = int.tryParse(maxSpeedStr);
-             if (limit != null) {
-               setState(() {
-                 _speedLimitKmH = limit;
-                 _checkOverspeed();
-               });
-             } else {
-               // Handle vague formats like "TR:urban" -> defaults?
-               // For minimal MVP, ignore complex tags.
-             }
+          final List elements = data['elements'];
+
+          // Tüm yollardan en düşük hız limitini al (en güvenli)
+          int minLimit = 999;
+
+          for (var element in elements) {
+            final tags = element['tags'];
+            if (tags == null) continue;
+
+            String? maxSpeedStr = tags['maxspeed'];
+            if (maxSpeedStr == null) continue;
+
+            int limit = -1;
+
+            // Önce sayısal değer dene
+            int? numericLimit = int.tryParse(maxSpeedStr);
+            if (numericLimit != null) {
+              limit = numericLimit;
+            } else {
+              // TR:urban, TR:rural gibi etiketleri çözümle
+              limit = _resolveTurkishSpeedTag(maxSpeedStr);
+            }
+
+            // Geçerli ve en düşük limiti seç
+            if (limit > 0 && limit < minLimit) {
+              minLimit = limit;
+            }
+          }
+
+          // Türkiye'de max 120 km/h (otoyol), 130 üzeri hatalı veri
+          if (minLimit > 130) {
+            minLimit = 120;
+          }
+
+          if (minLimit > 0 && minLimit < 999) {
+            setState(() {
+              _speedLimitKmH = minLimit;
+              _checkOverspeed();
+            });
           }
         }
       }
     } catch (e) {
-      // API Fail: keep previous or default
       debugPrint("API Error: $e");
     }
   }
@@ -181,7 +218,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Text(
                     _currentSpeedKmH.toStringAsFixed(0),
                     style: TextStyle(
-                      fontSize: 120, // Huge font
+                      fontSize: 90,
                       fontWeight: FontWeight.bold,
                       color: textColor,
                     ),
@@ -214,7 +251,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     child: Text(
                       _speedLimitKmH.toString(),
                       style: const TextStyle(
-                        fontSize: 80,
+                        fontSize: 60,
                         fontWeight: FontWeight.bold,
                         color: Colors.black,
                       ),
