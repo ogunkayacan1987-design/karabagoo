@@ -50,15 +50,21 @@ jobs:
 
       - name: Configure Android Permissions and Fix Kotlin
         run: |
-          # Inject permissions into AndroidManifest.xml
-          MANIFEST=$(find android -name AndroidManifest.xml | head -n 1)
-          if [ -z "$MANIFEST" ]; then
-            echo "AndroidManifest.xml not found! Check 'ls -R android' output above."
+          # Inject permissions into the MAIN AndroidManifest.xml (not debug/profile)
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if [ ! -f "$MANIFEST" ]; then
+            echo "Main AndroidManifest.xml not found! Trying fallback search..."
+            MANIFEST=$(find android -path "*/main/AndroidManifest.xml" | head -n 1)
+          fi
+          if [ -z "$MANIFEST" ] || [ ! -f "$MANIFEST" ]; then
+            echo "AndroidManifest.xml not found!"
             exit 1
           fi
           echo "Injecting permissions into $MANIFEST"
-          PERMISSIONS='<uses-permission android:name="android.permission.INTERNET"/><uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/><uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/><uses-permission android:name="android.permission.WAKE_LOCK"/>'
+          PERMISSIONS='<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>\n    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>\n    <uses-permission android:name="android.permission.WAKE_LOCK"/>'
           sed -i "s|<application|$PERMISSIONS\n    <application|g" $MANIFEST
+          echo "--- Final AndroidManifest.xml ---"
+          cat $MANIFEST
           
           # Fix Kotlin Version
           # Look for build.gradle or build.gradle.kts

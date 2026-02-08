@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -42,6 +43,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Timer? _limitUpdateTimer;
   StreamSubscription<Position>? _positionStream;
   DateTime _lastAlertTime = DateTime.now();
+  Position? _previousPosition;
+  DateTime? _previousPositionTime;
 
   @override
   void initState() {
@@ -68,19 +71,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _startTracking() {
-    // Location Settings
-    const LocationSettings locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 0,
-    );
+    late LocationSettings locationSettings;
+
+    if (Platform.isAndroid) {
+      locationSettings = AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 0,
+        intervalDuration: const Duration(seconds: 1),
+      );
+    } else {
+      locationSettings = const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 0,
+      );
+    }
 
     _positionStream = Geolocator.getPositionStream(locationSettings: locationSettings)
         .listen((Position position) {
       _updateSpeed(position);
-      // Periodic speed limit check (throttled to avoid API spam, but user said "GPS refresh 1s", APi usage might be heavy if 1s.
-      // Optimizing: Check limit only if moved significantly or every few seconds.
-      // Requirement: "GPS 1 sec refresh". Limit logic: "Get limit using OSM".
-      // We will check limit every 5 seconds to be safe on free API, but update speed instantly.
     });
 
     _limitUpdateTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
@@ -92,9 +100,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _updateSpeed(Position position) {
-    // speed is in m/s. Convert to km/h.
-    double speedKmH = (position.speed * 3.6);
-    if (speedKmH < 0) speedKmH = 0;
+    double speedKmH = 0;
+
+    // Birincil: GPS'in kendi hız verisi
+    if (position.speed > 0) {
+      speedKmH = position.speed * 3.6;
+    } else if (_previousPosition != null && _previousPositionTime != null) {
+      // Yedek: iki konum arası mesafe/süre hesabı
+      double distanceMeters = Geolocator.distanceBetween(
+        _previousPosition!.latitude,
+        _previousPosition!.longitude,
+        position.latitude,
+        position.longitude,
+      );
+      double timeSec = DateTime.now().difference(_previousPositionTime!).inMilliseconds / 1000.0;
+      if (timeSec > 0.5) {
+        speedKmH = (distanceMeters / timeSec) * 3.6;
+      }
+    }
+
+    _previousPosition = position;
+    _previousPositionTime = DateTime.now();
+
+    // GPS gürültüsünü filtrele (2 km/h altı = durağan)
+    if (speedKmH < 2) speedKmH = 0;
 
     setState(() {
       _currentSpeedKmH = speedKmH;
