@@ -40,6 +40,13 @@ jobs:
         run: |
           # Window Manager Android'de build hatasi yapabilir, pubspec'ten gecici olarak siliyoruz
           sed -i '/window_manager/d' pubspec.yaml
+          
+          # Replace imports with stub
+          # main.dart
+          sed -i "s|import 'package:window_manager/window_manager.dart';|import 'helpers/window_stub.dart';|g" lib/main.dart
+          # window_helper.dart
+          sed -i "s|import 'package:window_manager/window_manager.dart';|import 'window_stub.dart';|g" lib/helpers/window_helper.dart
+          
           cat pubspec.yaml
 
       - name: Configure Android Manifest
