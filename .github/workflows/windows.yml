@@ -1,0 +1,63 @@
+name: Build Windows Installer
+
+on:
+  push:
+    branches: [ "*" ]
+  pull_request:
+    branches: [ "*" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Enable Windows Desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build Windows App (Release)
+        run: flutter build windows --release
+
+      - name: Download VC Redistributable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path installer\redist
+          # VC++ Redist x64
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "installer\redist\vc_redist.x64.exe"
+          # VC++ Redist x86
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x86.exe" -OutFile "installer\redist\vc_redist.x86.exe"
+
+      - name: Build Installer with Inno Setup
+        shell: pwsh
+        run: |
+          # Inno Setup is pre-installed on windows-latest
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\setup.iss
+
+      - name: Upload Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OkulMesajlasmaKurulum
+          path: Output/OkulMesajlasmaKurulum.exe
+
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.1.${{ github.run_number }}
+          name: Release v1.1.${{ github.run_number }}
+          files: |
+            Output/OkulMesajlasmaKurulum.exe
+          draft: false
+          prerelease: false
