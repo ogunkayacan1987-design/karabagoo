@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:io';
 
+import 'package:window_manager/window_manager.dart';
 import 'helpers/window_helper.dart'; // [NEW] Use helper instead of direct package
 import 'screens/admin_screen.dart';
 import 'screens/client_screen.dart';
