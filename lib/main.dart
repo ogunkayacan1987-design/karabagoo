@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:window_manager/window_manager.dart';
 import 'dart:io';
 
+import 'helpers/window_helper.dart'; // [NEW] Use helper instead of direct package
 import 'screens/admin_screen.dart';
 import 'screens/client_screen.dart';
 import 'screens/teacher_screen.dart';
@@ -14,8 +14,9 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Windows icin pencere ayarlari
-  if (Platform.isWindows) {
-    await _initWindowManager();
+  await WindowHelper.ensureInitialized();
+  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+     await _initWindowManager();
   }
 
   runApp(const OkulMesajlasmaApp());
@@ -24,23 +25,17 @@ void main() async {
 /// Windows pencere yoneticisini baslat
 Future<void> _initWindowManager() async {
   try {
-    await windowManager.ensureInitialized();
-
-    const windowOptions = WindowOptions(
-      size: Size(1200, 800),
-      minimumSize: Size(800, 600),
+    // WindowHelper handles platform checks internally too, but good to be explicit here
+    // or just call WindowHelper methods directly.
+    await WindowHelper.setWindowOptions(
+      size: const Size(1200, 800),
+      minimumSize: const Size(800, 600),
       center: true,
       backgroundColor: Colors.transparent,
       skipTaskbar: false,
       titleBarStyle: TitleBarStyle.normal,
       title: 'Karabag H.O.Akarsel Ortaokulu - Mesajlasma',
     );
-
-    windowManager.waitUntilReadyToShow(windowOptions, () async {
-      await windowManager.show();
-      await windowManager.focus();
-      await windowManager.setPreventClose(true);
-    });
   } catch (e) {
     print('Window manager baslatma hatasi: $e');
   }
@@ -60,7 +55,7 @@ class OkulMesajlasmaApp extends StatelessWidget {
           brightness: Brightness.light,
         ),
         useMaterial3: true,
-        fontFamily: Platform.isWindows ? 'Segoe UI' : null,
+        fontFamily: (Platform.isWindows || Platform.isLinux || Platform.isMacOS) ? 'Segoe UI' : null,
       ),
       home: const LicenseCheckWrapper(),
     );
@@ -86,26 +81,28 @@ class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> with WindowLi
   @override
   void initState() {
     super.initState();
-    if (Platform.isWindows) {
-      windowManager.addListener(this);
-    }
+    _setupWindowListener(); 
     _checkLicense();
+  }
+  
+  Future<void> _setupWindowListener() async {
+      await WindowHelper.addListener(this);
   }
 
   @override
   void dispose() {
-    if (Platform.isWindows) {
-      windowManager.removeListener(this);
-    }
+    _removeWindowListener();
     super.dispose();
+  }
+  
+  Future<void> _removeWindowListener() async {
+      await WindowHelper.removeListener(this);
   }
 
   // X butonuna basinca minimize et (sadece Windows)
   @override
   void onWindowClose() async {
-    if (Platform.isWindows) {
-      await windowManager.minimize();
-    }
+    await WindowHelper.minimize();
   }
 
   Future<void> _checkLicense() async {
@@ -640,3 +637,4 @@ class _ModeCardState extends State<_ModeCard> {
     );
   }
 }
+

@@ -5,8 +5,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:intl/intl.dart';
-import 'package:window_manager/window_manager.dart';
+// import 'package:window_manager/window_manager.dart'; // [REMOVED]
 
+import '../helpers/window_helper.dart'; // [NEW]
 import '../models/message.dart';
 import '../models/room.dart';
 import '../services/network_service.dart';
@@ -169,15 +170,13 @@ class _ClientScreenState extends State<ClientScreen> {
   }
 
   Future<void> _showWindowsNotification(Message message) async {
-    if (Platform.isWindows) {
-      await windowManager.setAlwaysOnTop(true);
-      await Future.delayed(const Duration(milliseconds: 100));
-      await windowManager.setAlwaysOnTop(false);
-      await windowManager.focus();
+    await WindowHelper.setAlwaysOnTop(true);
+    await Future.delayed(const Duration(milliseconds: 100));
+    await WindowHelper.setAlwaysOnTop(false);
+    await WindowHelper.focus();
 
-      if (await windowManager.isMinimized()) {
-        await windowManager.restore();
-      }
+    if (await WindowHelper.isMinimized()) {
+      await WindowHelper.restore();
     }
   }
 
@@ -625,9 +624,7 @@ class _ClientScreenState extends State<ClientScreen> {
           IconButton(
             icon: const Icon(Icons.minimize),
             onPressed: () async {
-              if (Platform.isWindows) {
-                await windowManager.minimize();
-              }
+              await WindowHelper.minimize(); // [NEW] Use helper
             },
             tooltip: 'Simge Durumuna Kucult',
           ),
@@ -788,3 +785,4 @@ class _ClientScreenState extends State<ClientScreen> {
     );
   }
 }
+

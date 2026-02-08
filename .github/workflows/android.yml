@@ -25,96 +25,63 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.5'
           channel: 'stable'
-
-      - name: Create Android Project
+          
+      - name: Create Android Infrastructure
         run: |
-          rm -rf android
-          flutter config --enable-android
-          flutter create temp_runner --org com.karabag --project-name okul_mesajlasma --template=app --platforms android
-          cp -r temp_runner/android .
-          rm -rf temp_runner
+          # Generate android folder if missing
+          if [ ! -d "android" ]; then
+            echo "Android folder missing, generating..."
+            flutter config --enable-android
+            flutter create . --platforms android --org com.karabag --project-name okul_mesajlasma
+          fi
 
       - name: Configure Android Manifest
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if [ ! -f "$MANIFEST" ]; then
-            MANIFEST=$(find android -path "*/main/AndroidManifest.xml" | head -n 1)
+             # Fallback search
+             MANIFEST=$(find android -name AndroidManifest.xml | grep main | head -n 1)
           fi
-          echo "Using manifest: $MANIFEST"
+          
+          if [ -f "$MANIFEST" ]; then
+            echo "Injecting permissions into $MANIFEST"
+            # Add permissions
+            sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>\n    <application|' "$MANIFEST"
+            
+            # Update Label
+            sed -i 's/android:label="okul_mesajlasma"/android:label="Okul Muduru"/g' "$MANIFEST"
+            
+            cat "$MANIFEST"
+          else
+            echo "Error: AndroidManifest.xml not found!"
+            exit 1
+          fi
 
-          # Permissions
-          sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>\n    <application|' "$MANIFEST"
-
-          # App label
-          sed -i 's/android:label="[^"]*"/android:label="Okul Muduru"/g' "$MANIFEST"
-
-          cat "$MANIFEST"
-
-      - name: Fix Android SDK Versions
+      - name: Configure Gradle (MinSDK)
         run: |
-          # audioplayers ve file_picker icin minSdkVersion 23 gerekli
-          # Kotlin DSL (.kts) format
-          APP_KTS="android/app/build.gradle.kts"
-          if [ -f "$APP_KTS" ]; then
-            echo "Patching $APP_KTS (Kotlin DSL)"
-            sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' "$APP_KTS"
-            sed -i 's/minSdk = .*flutter.*/minSdk = 23/' "$APP_KTS"
-            echo "=== app/build.gradle.kts ==="
-            cat "$APP_KTS"
+          # Fix minSdk for plugins (audioplayers etc need 23+)
+          GRADLE_FILE="android/app/build.gradle"
+          if [ -f "android/app/build.gradle.kts" ]; then
+            GRADLE_FILE="android/app/build.gradle.kts"
           fi
-
-          # Groovy DSL (.gradle) format
-          APP_GRADLE="android/app/build.gradle"
-          if [ -f "$APP_GRADLE" ]; then
-            echo "Patching $APP_GRADLE (Groovy)"
-            sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 23/' "$APP_GRADLE"
-            sed -i 's/minSdk flutter.minSdkVersion/minSdk 23/' "$APP_GRADLE"
-            echo "=== app/build.gradle ==="
-            cat "$APP_GRADLE"
+          
+          echo "Patching $GRADLE_FILE"
+          if [ -f "$GRADLE_FILE" ]; then
+            # Simple replacement for minSdk
+            sed -i 's/minSdk.*/minSdk = 23/g' "$GRADLE_FILE"
+            sed -i 's/minSdkVersion.*/minSdkVersion 23/g' "$GRADLE_FILE"
           fi
-
-      - name: Remove Desktop-Only Dependencies
-        run: |
-          # window_manager sadece desktop - Android buildden cikar
-          sed -i '/window_manager/d' pubspec.yaml
-
-          # Import'lari repodaki stub dosyasi ile degistir
-          sed -i "s|import 'package:window_manager/window_manager.dart';|import '../helpers/window_stub.dart';|g" lib/screens/client_screen.dart
-          sed -i "s|import 'package:window_manager/window_manager.dart';|import 'helpers/window_stub.dart';|g" lib/main.dart
-
-          echo "=== pubspec.yaml ==="
-          cat pubspec.yaml
-          echo ""
-          echo "=== Checking imports ==="
-          head -10 lib/main.dart
-          head -10 lib/screens/client_screen.dart
 
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Analyze Code
-        run: flutter analyze --no-fatal-warnings --no-fatal-infos || true
-
       - name: Build APK
-        run: |
-          echo "Flutter version:"
-          flutter --version
-          echo "Building APK..."
-          flutter build apk --release 2>&1 | tee build_output.log || true
-          if [ ! -f build/app/outputs/flutter-apk/app-release.apk ]; then
-            echo ""
-            echo "============================================"
-            echo "BUILD HATASI - SON 200 SATIR:"
-            echo "============================================"
-            tail -200 build_output.log
-            exit 1
-          fi
-          echo "APK basariyla olusturuldu!"
+        run: flutter build apk --release
 
       - name: Rename APK
-        run: mv build/app/outputs/flutter-apk/app-release.apk OkulMuduru.apk
+        run: |
+          mv build/app/outputs/flutter-apk/app-release.apk OkulMuduru.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -126,8 +93,8 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v1.1.${{ github.run_number }}
-          name: Release v1.1.${{ github.run_number }}
+          tag_name: v1.2.${{ github.run_number }}
+          name: Release v1.2.${{ github.run_number }}
           files: OkulMuduru.apk
           draft: false
           prerelease: false
