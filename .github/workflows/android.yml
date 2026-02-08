@@ -25,6 +25,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.24.5'
           channel: 'stable'
 
       - name: Create Android Project
@@ -97,7 +98,13 @@ jobs:
         run: flutter analyze --no-fatal-warnings --no-fatal-infos || true
 
       - name: Build APK (Release mode)
-        run: flutter build apk --release
+        run: |
+          flutter build apk --release --verbose 2>&1 | tee build_output.log || true
+          if [ ! -f build/app/outputs/flutter-apk/app-release.apk ]; then
+            echo "========== SON 150 SATIR =========="
+            tail -150 build_output.log
+            exit 1
+          fi
 
       - name: Rename APK
         run: mv build/app/outputs/flutter-apk/app-release.apk OkulMuduru.apk
