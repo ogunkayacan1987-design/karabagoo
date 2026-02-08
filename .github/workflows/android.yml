@@ -48,6 +48,13 @@ jobs:
           sed -i "s|import 'package:window_manager/window_manager.dart';|import 'window_stub.dart';|g" lib/helpers/window_helper.dart
           
           cat pubspec.yaml
+          
+          # Clean Flutter cache to force regeneration of plugin registrant
+          rm -f .flutter-plugins
+          rm -f .flutter-plugins-dependencies
+          rm -rf android/.flutter-plugins
+          rm -rf android/.flutter-plugins-dependencies
+          flutter clean
 
       - name: Configure Android Manifest
         run: |
