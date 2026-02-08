@@ -29,63 +29,98 @@ jobs:
 
       - name: Create Flutter Project Structure
         run: |
-          # Clean start
           rm -rf android
-
-          # Enable Android
           flutter config --enable-android
-
-          # Generate in temp folder
-          flutter create temp_runner --org com.karabag.okulmesajlasma --project-name okul_mesajlasma --template=app --platforms android
-
-          # Copy android folder to root
+          flutter create temp_runner --org com.karabag --project-name okul_mesajlasma --template=app --platforms android
           cp -r temp_runner/android .
-
-          # Cleanup
           rm -rf temp_runner
-
-          echo "Listing android directory structure:"
-          ls -R android
 
       - name: Configure Android App
         run: |
-          # Inject permissions into AndroidManifest.xml
-          MANIFEST=$(find android -name AndroidManifest.xml | head -n 1)
-          if [ -z "$MANIFEST" ]; then
-            echo "AndroidManifest.xml not found!"
+          # AndroidManifest.xml bul
+          MAIN_MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if [ ! -f "$MAIN_MANIFEST" ]; then
+            MAIN_MANIFEST=$(find android -path "*/main/AndroidManifest.xml" | head -n 1)
+          fi
+
+          if [ -z "$MAIN_MANIFEST" ] || [ ! -f "$MAIN_MANIFEST" ]; then
+            echo "ERROR: AndroidManifest.xml not found!"
+            find android -name "AndroidManifest.xml"
             exit 1
           fi
-          echo "Injecting permissions into $MANIFEST"
-          PERMISSIONS='<uses-permission android:name="android.permission.INTERNET"/><uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/><uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/><uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/><uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>'
-          sed -i "s|<application|$PERMISSIONS\n    <application|g" $MANIFEST
 
-          # Set app label to OkulMuduru
-          sed -i 's/android:label="[^"]*"/android:label="Okul Muduru"/g' $MANIFEST
+          echo "Patching: $MAIN_MANIFEST"
+
+          # Permissions ekle
+          sed -i 's|<application|<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>\n    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>\n    <application|' "$MAIN_MANIFEST"
+
+          # App label degistir
+          sed -i 's/android:label="[^"]*"/android:label="Okul Muduru"/g' "$MAIN_MANIFEST"
 
           echo "=== AndroidManifest.xml ==="
-          cat $MANIFEST
+          cat "$MAIN_MANIFEST"
 
-          # Fix Kotlin Version
-          BUILD_GRADLE=$(find android -maxdepth 1 -name "build.gradle" -o -name "build.gradle.kts" | head -n 1)
+      - name: Remove Desktop-Only Dependencies
+        run: |
+          # window_manager sadece desktop icin, Android buildden cikar
+          sed -i '/window_manager/d' pubspec.yaml
 
-          if [ -z "$BUILD_GRADLE" ]; then
-             BUILD_GRADLE=$(find android -name "build.gradle" | grep -v "/app/" | head -n 1)
-          fi
+          # Stub dosyasi olustur
+          mkdir -p lib/helpers
+          cat > lib/helpers/window_stub.dart << 'STUBEOF'
+          // Window manager stub for non-desktop platforms
+          mixin WindowListener {
+            void onWindowClose() {}
+            void onWindowFocus() {}
+            void onWindowBlur() {}
+            void onWindowMaximize() {}
+            void onWindowUnmaximize() {}
+            void onWindowMinimize() {}
+            void onWindowRestore() {}
+            void onWindowResize() {}
+            void onWindowMove() {}
+            void onWindowEvent(String eventName) {}
+          }
 
-          if [ -n "$BUILD_GRADLE" ]; then
-              echo "Patching Kotlin version in: $BUILD_GRADLE"
-              if [[ "$BUILD_GRADLE" == *".kts" ]]; then
-                  sed -i "/kotlin(\"android\")/c\    kotlin(\"android\") version \"1.9.23\"" $BUILD_GRADLE || true
-              else
-                  sed -i "/ext.kotlin_version/c\    ext.kotlin_version = '1.9.23'" $BUILD_GRADLE
-              fi
-              cat $BUILD_GRADLE
-          else
-              echo "CRITICAL ERROR: Could not find android/build.gradle."
-              ls -la android/
-              exit 1
-          fi
+          class _WMStub {
+            Future<void> ensureInitialized() async {}
+            void waitUntilReadyToShow(dynamic options, dynamic callback) {}
+            Future<void> show() async {}
+            Future<void> focus() async {}
+            Future<void> minimize() async {}
+            Future<void> restore() async {}
+            Future<void> setPreventClose(bool v) async {}
+            Future<void> setAlwaysOnTop(bool v) async {}
+            Future<bool> isMinimized() async => false;
+            void addListener(dynamic l) {}
+            void removeListener(dynamic l) {}
+          }
 
+          class WindowOptions {
+            final dynamic size;
+            final dynamic minimumSize;
+            final bool? center;
+            final dynamic backgroundColor;
+            final bool? skipTaskbar;
+            final dynamic titleBarStyle;
+            final String? title;
+            const WindowOptions({this.size, this.minimumSize, this.center, this.backgroundColor, this.skipTaskbar, this.titleBarStyle, this.title});
+          }
+
+          class TitleBarStyle {
+            static const normal = TitleBarStyle._();
+            const TitleBarStyle._();
+          }
+
+          final windowManager = _WMStub();
+          STUBEOF
+
+          # Import'lari stub ile degistir
+          sed -i "s|import 'package:window_manager/window_manager.dart';|import '../helpers/window_stub.dart';|g" lib/screens/client_screen.dart
+          sed -i "s|import 'package:window_manager/window_manager.dart';|import 'helpers/window_stub.dart';|g" lib/main.dart
+
+          echo "=== pubspec.yaml ==="
+          cat pubspec.yaml
 
       - name: Install Dependencies
         run: flutter pub get
