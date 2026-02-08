@@ -55,6 +55,9 @@ jobs:
           rm -rf android/.flutter-plugins
           rm -rf android/.flutter-plugins-dependencies
           flutter clean
+          
+          # Force upgrade dependencies to fix v1 embedding issues
+          flutter pub upgrade
 
       - name: Configure Android Manifest
         run: |
