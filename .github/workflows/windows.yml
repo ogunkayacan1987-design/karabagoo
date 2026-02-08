@@ -21,8 +21,13 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Enable Windows Desktop
-        run: flutter config --enable-windows-desktop
+      - name: Create Windows Infrastructure
+        run: |
+          if (-not (Test-Path "windows")) {
+            Write-Host "Windows folder missing, generating..."
+            flutter config --enable-windows-desktop
+            flutter create . --platforms windows --org com.karabag --project-name okul_mesajlasma
+          }
 
       - name: Install Dependencies
         run: flutter pub get
