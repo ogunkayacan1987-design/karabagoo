@@ -740,7 +740,7 @@ class _AdminScreenState extends State<AdminScreen> {
 
     return ListTile(
       leading: CircleAvatar(
-        backgroundColor: color.withOpacity(0.2),
+        backgroundColor: Color.fromRGBO(color.red, color.green, color.blue, 0.2),
         child: Icon(icon, color: color, size: 20),
       ),
       title: Text(

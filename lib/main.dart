@@ -602,7 +602,7 @@ class _ModeCardState extends State<_ModeCard> {
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: _isHovered ? widget.color.withOpacity(0.1) : Colors.grey[50],
+              color: _isHovered ? Color.fromRGBO(widget.color.red, widget.color.green, widget.color.blue, 0.1) : Colors.grey[50],
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: _isHovered ? widget.color : Colors.grey[300]!,
@@ -615,7 +615,7 @@ class _ModeCardState extends State<_ModeCard> {
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: widget.color.withOpacity(0.1),
+                    color: Color.fromRGBO(widget.color.red, widget.color.green, widget.color.blue, 0.1),
                     shape: BoxShape.circle,
                   ),
                   child: Icon(widget.icon, size: 32, color: widget.color),
