@@ -16,12 +16,21 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
 /**
  * Uses Claude Vision API to detect and extract questions from a PDF page bitmap.
  * Sends the bitmap as base64 and parses structured JSON response.
  */
 @Singleton
-class ClaudeVisionDetector @Inject constructor() {
+class ClaudeVisionDetector @Inject constructor(
+    @ApplicationContext private val context: Context
+) {
 
     companion object {
         private const val TAG = "ClaudeVisionDetector"
@@ -35,14 +44,19 @@ class ClaudeVisionDetector @Inject constructor() {
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
+    private fun logToFile(message: String) {
+        try {
+            val logFile = File(context.getExternalFilesDir(null), "claude_debug_log.txt")
+            val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+            logFile.appendText("[$time] $message\n")
+            Log.d(TAG, message)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to write debug log", e)
+        }
+    }
+
     /**
      * Sends a page bitmap to Claude Vision and returns detected questions as OcrResult list.
-     * @param pageBitmap  The rendered PDF page bitmap
-     * @param apiKey      Claude API key
-     * @param config      DetectionConfig with model/token settings
-     * @param columnIndex Column index for the OcrResult
-     * @param regionRect  Region rect for the OcrResult
-     * @return List of OcrResult on success, empty list on failure
      */
     suspend fun detectQuestions(
         pageBitmap: Bitmap,
@@ -52,10 +66,10 @@ class ClaudeVisionDetector @Inject constructor() {
         regionRect: Rect = Rect(0, 0, pageBitmap.width, pageBitmap.height)
     ): List<OcrResult> {
         val base64Image = bitmapToBase64(pageBitmap)
-
         val prompt = buildPrompt()
-
         val requestBody = buildRequestBody(base64Image, prompt, config)
+
+        logToFile("Starting Claude API call for column: $columnIndex, model: ${config.claudeModel}")
 
         val request = Request.Builder()
             .url(API_URL)
@@ -67,16 +81,21 @@ class ClaudeVisionDetector @Inject constructor() {
 
         return try {
             val response = httpClient.newCall(request).execute()
-            val bodyStr = response.body?.string() ?: return emptyList()
+            val bodyStr = response.body?.string() ?: ""
 
             if (!response.isSuccessful) {
-                Log.e(TAG, "API error ${response.code}: $bodyStr")
+                logToFile("API ERROR ${response.code}: $bodyStr")
                 return emptyList()
             }
 
-            parseApiResponse(bodyStr, columnIndex, regionRect)
+            logToFile("API SUCCESS: Received response length = ${bodyStr.length} chars")
+            logToFile("RAW JSON DUMP START:\n$bodyStr\nRAW JSON DUMP END")
+
+            val results = parseApiResponse(bodyStr, columnIndex, regionRect)
+            logToFile("Parsed ${results.firstOrNull()?.textLines?.size ?: 0} OCR lines from response")
+            results
         } catch (e: Exception) {
-            Log.e(TAG, "Claude Vision API call failed", e)
+            logToFile("EXCEPTION during API call or parsing: ${e.message}\n${e.stackTraceToString()}")
             emptyList()
         }
     }
