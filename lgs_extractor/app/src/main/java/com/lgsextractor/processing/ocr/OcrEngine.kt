@@ -43,28 +43,8 @@ class OcrEngine @Inject constructor(
         config: DetectionConfig,
         claudeApiKey: String? = null
     ): List<OcrResult> {
-        // If Claude Vision is enabled and API key is available, use it for the full page
-        if (config.useClaudeVision || config.ocrEngine == OcrEngineType.CLAUDE_VISION) {
-            val key = claudeApiKey?.takeIf { it.isNotBlank() }
-            if (key != null) {
-                val pageBitmap = BitmapFactory.decodeFile(page.bitmapPath)
-                if (pageBitmap != null) {
-                    val fullPageRect = Rect(0, 0, page.width, page.height)
-                    val claudeResults = claudeVisionDetector.detectQuestions(
-                        pageBitmap = pageBitmap,
-                        apiKey = key,
-                        config = config,
-                        columnIndex = 0,
-                        regionRect = fullPageRect
-                    )
-                    pageBitmap.recycle()
-                    if (claudeResults.isNotEmpty()) return claudeResults
-                }
-            }
-            // Fall through to local OCR if Claude Vision fails or no key
-        }
-
         val results = mutableListOf<OcrResult>()
+        val claudeKey = claudeApiKey?.takeIf { it.isNotBlank() }
 
         // Process each detected column separately for better accuracy
         layoutInfo.columnBoundaries.forEachIndexed { colIdx, column ->
@@ -82,20 +62,33 @@ class OcrEngine @Inject constructor(
                 cvProcessor.preprocessForOcr(columnBitmap)
             } else columnBitmap
 
-            val result = when (config.ocrEngine) {
-                OcrEngineType.ML_KIT_PRIMARY, OcrEngineType.CLAUDE_VISION -> {
+            val result = when {
+                config.useClaudeVision || config.ocrEngine == OcrEngineType.CLAUDE_VISION -> {
+                    if (claudeKey != null) {
+                        val claudeResults = claudeVisionDetector.detectQuestions(
+                            pageBitmap = processedBitmap,
+                            apiKey = claudeKey,
+                            config = config,
+                            columnIndex = colIdx,
+                            regionRect = regionRect
+                        )
+                        if (claudeResults.isNotEmpty()) claudeResults.first() else null
+                    } else null
+                }
+                config.ocrEngine == OcrEngineType.ML_KIT_PRIMARY -> {
                     mlKitOcr.recognizeText(processedBitmap, colIdx, regionRect)
                         ?: tesseractOcr.recognizeText(processedBitmap, colIdx, regionRect)
                 }
-                OcrEngineType.TESSERACT_PRIMARY -> {
+                config.ocrEngine == OcrEngineType.TESSERACT_PRIMARY -> {
                     tesseractOcr.recognizeText(processedBitmap, colIdx, regionRect)
                         ?: mlKitOcr.recognizeText(processedBitmap, colIdx, regionRect)
                 }
-                OcrEngineType.HYBRID -> {
+                config.ocrEngine == OcrEngineType.HYBRID -> {
                     val mlResult = mlKitOcr.recognizeText(processedBitmap, colIdx, regionRect)
                     val tessResult = tesseractOcr.recognizeText(processedBitmap, colIdx, regionRect)
                     mergeResults(mlResult, tessResult, colIdx, regionRect)
                 }
+                else -> null
             }
 
             result?.let { results.add(it) }
