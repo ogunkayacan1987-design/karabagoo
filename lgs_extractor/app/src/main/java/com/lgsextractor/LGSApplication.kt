@@ -5,14 +5,9 @@ import androidx.work.Configuration
 import androidx.work.WorkManager
 import dagger.hilt.android.HiltAndroidApp
 import org.opencv.android.OpenCVLoader
-import javax.inject.Inject
-import javax.inject.Provider
 
 @HiltAndroidApp
 class LGSApplication : Application(), Configuration.Provider {
-
-    @Inject
-    lateinit var workerFactory: Provider<androidx.work.WorkerFactory>
 
     override fun onCreate() {
         super.onCreate()
