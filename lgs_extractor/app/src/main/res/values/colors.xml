@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="colorPrimary">#1565C0</color>
+    <color name="colorPrimaryDark">#003c8f</color>
+    <color name="colorPrimaryLight">#5e92f3</color>
+    <color name="colorAccent">#FF6F00</color>
+    <color name="colorBackground">#F5F5F5</color>
+    <color name="colorSurface">#FFFFFF</color>
+
+    <!-- Confidence colors -->
+    <color name="confidence_high">#2196F3</color>
+    <color name="confidence_medium">#FF9800</color>
+    <color name="confidence_low">#F44336</color>
+
+    <!-- Overlay colors -->
+    <color name="overlay_question_fill">#302196F3</color>
+    <color name="overlay_question_stroke">#2196F3</color>
+    <color name="overlay_selected_fill">#304CAF50</color>
+    <color name="overlay_selected_stroke">#4CAF50</color>
+
+    <!-- Text colors -->
+    <color name="textPrimary">#212121</color>
+    <color name="textSecondary">#757575</color>
+    <color name="textHint">#BDBDBD</color>
+
+    <!-- Status bar -->
+    <color name="statusBarColor">#003c8f</color>
+</resources>

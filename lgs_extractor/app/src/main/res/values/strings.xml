@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LGS Soru Çıkarıcı</string>
+    <string name="title_pdf_viewer">PDF Görüntüleyici</string>
+    <string name="title_question_list">Tespit Edilen Sorular</string>
+    <string name="title_export">Dışa Aktar</string>
+    <string name="title_settings">Ayarlar</string>
+
+    <!-- Main Screen -->
+    <string name="empty_documents">Henüz PDF eklenmedi.\nPDF eklemek için + butonuna dokunun.</string>
+    <string name="add_pdf">PDF Ekle</string>
+    <string name="delete_document">Dokümanı Sil</string>
+    <string name="delete_confirm_message">Bu doküman ve tespit edilen tüm sorular silinecek. Emin misiniz?</string>
+
+    <!-- Processing -->
+    <string name="processing_rendering">Sayfa render ediliyor...</string>
+    <string name="processing_layout">Layout analizi yapılıyor...</string>
+    <string name="processing_ocr">OCR işleniyor...</string>
+    <string name="processing_detecting">Sorular tespit ediliyor...</string>
+    <string name="processing_cropping">Kırpma işlemi...</string>
+    <string name="processing_complete">İşlem tamamlandı</string>
+    <string name="cancel">İptal</string>
+
+    <!-- Buttons -->
+    <string name="extract_all_pages">Tüm Sayfaları İşle</string>
+    <string name="extract_current_page">Bu Sayfayı İşle</string>
+    <string name="view_questions">Soruları Görüntüle</string>
+    <string name="export">Dışa Aktar</string>
+    <string name="verify">Onayla</string>
+    <string name="edit_mode">Düzenleme Modu</string>
+
+    <!-- Export -->
+    <string name="export_as_zip">ZIP Olarak İndir</string>
+    <string name="export_to_downloads">İndirmeler Klasörüne Kaydet</string>
+    <string name="export_share">Paylaş</string>
+
+    <!-- Messages -->
+    <string name="questions_found">%d soru tespit edildi</string>
+    <string name="boundary_updated">Soru sınırı güncellendi</string>
+    <string name="no_questions">Bu sayfada soru bulunamadı</string>
+    <string name="ocr_warning">OCR kalitesi düşük - Tesseract modeli yüklü değil</string>
+</resources>

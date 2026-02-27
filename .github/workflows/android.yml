@@ -1,4 +1,4 @@
-name: Build Android App
+name: Build LGS Question Extractor (Native Android APK)
 
 on:
   push:
@@ -8,112 +8,176 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-native-android:
+    name: Build Kotlin/Android APK
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
           java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
         with:
-          channel: 'stable' # Use latest stable version for best compatibility
-          
-      - name: Create Flutter Project Structure
-        run: |
-          # Clean start
-          rm -rf android
-          
-          # Enable Android
-          flutter config --enable-android
-          
-          # Generate in temp folder
-          flutter create temp_runner --org com.speedguard.app --project-name speedguard --template=app --platforms android
-          
-          # Copy android folder to root
-          cp -r temp_runner/android .
-          
-          # Cleanup
-          rm -rf temp_runner
-          
-          # Debug: List EVERYTHING in android to see what we got
-          echo "Listing android directory structure:"
-          ls -R android
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('lgs_extractor/**/*.gradle*', 'lgs_extractor/**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
 
-      - name: Configure Android Permissions and Fix Kotlin
+      - name: Create local.properties
+        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > lgs_extractor/local.properties
+
+      - name: Create tessdata placeholder directory
         run: |
-          # Inject permissions into the MAIN AndroidManifest.xml (not debug/profile)
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ ! -f "$MANIFEST" ]; then
-            echo "Main AndroidManifest.xml not found! Trying fallback search..."
-            MANIFEST=$(find android -path "*/main/AndroidManifest.xml" | head -n 1)
+          mkdir -p lgs_extractor/app/src/main/assets/tessdata
+          # IMPORTANT: For full Turkish OCR support, download tur.traineddata from:
+          # https://github.com/tesseract-ocr/tessdata/blob/main/tur.traineddata
+          # and commit it to lgs_extractor/app/src/main/assets/tessdata/tur.traineddata
+          # The app falls back to ML Kit OCR if tessdata is missing.
+          touch lgs_extractor/app/src/main/assets/tessdata/.gitkeep
+
+      - name: Create launcher icon PNGs
+        run: |
+          python3 - << 'PYEOF'
+          import struct, zlib, os
+
+          def png_bytes(w, h, r, g, b):
+              def chunk(name, data):
+                  payload = name + data
+                  return struct.pack('>I', len(data)) + payload + struct.pack('>I', zlib.crc32(payload) & 0xffffffff)
+              sig = b'\x89PNG\r\n\x1a\n'
+              ihdr_data = struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)
+              raw = b''.join(b'\x00' + bytes([r, g, b] * w) for _ in range(h))
+              return sig + chunk(b'IHDR', ihdr_data) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+
+          icons = [
+              ('mipmap-hdpi', 72),
+              ('mipmap-xhdpi', 96),
+              ('mipmap-xxhdpi', 144),
+              ('mipmap-xxxhdpi', 192),
+          ]
+          for density, size in icons:
+              path = f'lgs_extractor/app/src/main/res/{density}'
+              os.makedirs(path, exist_ok=True)
+              data = png_bytes(size, size, 21, 101, 192)
+              open(f'{path}/ic_launcher.png', 'wb').write(data)
+              open(f'{path}/ic_launcher_round.png', 'wb').write(data)
+          print('Icons generated successfully')
+          PYEOF
+
+      - name: Set up Gradle wrapper
+        run: |
+          cd lgs_extractor
+          if [ ! -f gradlew ]; then
+            echo "Downloading Gradle 8.4 to generate wrapper..."
+            curl -sL https://services.gradle.org/distributions/gradle-8.4-bin.zip -o /tmp/gradle.zip
+            unzip -q /tmp/gradle.zip -d /tmp/
+            export PATH="/tmp/gradle-8.4/bin:$PATH"
+            gradle wrapper --gradle-version=8.4
           fi
-          if [ -z "$MANIFEST" ] || [ ! -f "$MANIFEST" ]; then
-            echo "AndroidManifest.xml not found!"
-            exit 1
-          fi
-          echo "Injecting permissions into $MANIFEST"
-          PERMISSIONS='<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>\n    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>\n    <uses-permission android:name="android.permission.WAKE_LOCK"/>'
-          sed -i "s|<application|$PERMISSIONS\n    <application|g" $MANIFEST
-          echo "--- Final AndroidManifest.xml ---"
-          cat $MANIFEST
-          
-          # Fix Kotlin Version
-          # Look for build.gradle or build.gradle.kts
-          BUILD_GRADLE=$(find android -maxdepth 1 -name "build.gradle" -o -name "build.gradle.kts" | head -n 1)
-          
-          if [ -z "$BUILD_GRADLE" ]; then
-             echo "build.gradle not found in android root! Trying recursive search..."
-             # Find any build.gradle that is NOT inside 'app' folder
-             BUILD_GRADLE=$(find android -name "build.gradle" | grep -v "/app/" | head -n 1)
-          fi
-          
-          if [ -n "$BUILD_GRADLE" ]; then
-              echo "Patching Kotlin version in: $BUILD_GRADLE"
-              # Check if it's KTS or Groovy and patch accordingly (Simple patch for Groovy, warning for KTS)
-              if [[ "$BUILD_GRADLE" == *".kts" ]]; then
-                  echo "Warning: Kotlin DSL (kts) detected. Attempting generic patch..."
-                  sed -i "/kotlin(\"android\")/c\    kotlin(\"android\") version \"1.9.23\"" $BUILD_GRADLE || true
-              else
-                  sed -i "/ext.kotlin_version/c\    ext.kotlin_version = '1.9.23'" $BUILD_GRADLE
-              fi
-              cat $BUILD_GRADLE
+          chmod +x gradlew
+
+      - name: Build Debug APK
+        working-directory: lgs_extractor
+        run: |
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --build-cache \
+            --parallel \
+            -x test \
+            --stacktrace \
+            --info
+        env:
+          GRADLE_OPTS: -Xmx4g -XX:MaxMetaspaceSize=512m -Dorg.gradle.daemon=false
+
+      - name: Locate and stage APK
+        run: |
+          mkdir -p release
+          APK=$(find lgs_extractor -name "*debug*.apk" | head -1)
+          if [ -n "$APK" ]; then
+            cp "$APK" release/LGSQuestionExtractor-debug.apk
+            echo "APK staged: $APK → release/LGSQuestionExtractor-debug.apk"
+            ls -lh release/
           else
-              echo "CRITICAL ERROR: Could not find android/build.gradle. One last check of root:"
-              ls -la android/
-              exit 1
+            echo "WARNING: Debug APK not found"
+            find lgs_extractor -name "*.apk" 2>/dev/null || true
           fi
-
-
-      - name: Install Dependencies
-        run: flutter pub get
-
-      - name: Build APK (Release mode)
-        run: flutter build apk --release
-
-      - name: Rename APK
-        run: mv build/app/outputs/flutter-apk/app-release.apk app-release.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
-          path: app-release.apk
+          name: LGSQuestionExtractor-APK
+          path: release/LGSQuestionExtractor-debug.apk
+          if-no-files-found: warn
+          retention-days: 30
 
-      - name: Create Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Create GitHub Release on main push
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: Release v1.0.${{ github.run_number }}
-          files: app-release.apk
+          tag_name: lgs-v1.0.${{ github.run_number }}
+          name: "LGS Soru Çıkarıcı v1.0.${{ github.run_number }}"
+          body: |
+            ## LGS Soru Çıkarıcı — Android APK
+
+            ### Özellikler
+            - PDF yükleme (telefon storage)
+            - 300 DPI sayfa render (PdfRenderer)
+            - OpenCV 4.9 layout analizi (tek/çift sütun)
+            - Google ML Kit OCR (Türkçe latin alphabet)
+            - Tesseract4Android (isteğe bağlı, gelişmiş Türkçe OCR)
+            - LGS formatı soru tespiti: `1.` `Soru N` `A) B) C) D)`
+            - Bounding box overlay ve manuel düzeltme
+            - JPEG batch export + ZIP
+            - Doğruluk metrikleri (F1, IoU, Precision, Recall)
+            - Adaptif öğrenme (kullanıcı düzeltmelerinden)
+
+            ### Kurulum
+            1. APK'yı telefonunuza indirin
+            2. Ayarlar → Güvenlik → Bilinmeyen Kaynaklar
+            3. APK'yı yükleyin
+
+            ### Tesseract Kurulumu (Opsiyonel)
+            Daha iyi Türkçe OCR için:
+            [tur.traineddata indir](https://github.com/tesseract-ocr/tessdata/blob/main/tur.traineddata)
+
+            **Min Android:** 8.0 (API 26) | **Commit:** ${{ github.sha }}
+          files: release/LGSQuestionExtractor-debug.apk
           draft: false
           prerelease: false
+
+      - name: Build Summary
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ## Build Özeti — LGS Question Extractor
+
+          | Bileşen | Versiyon |
+          |---------|----------|
+          | Kotlin | 1.9.22 |
+          | Min SDK | 26 (Android 8.0) |
+          | Target SDK | 34 (Android 14) |
+          | OpenCV | 4.9.0 (Maven Central) |
+          | ML Kit Text | 16.0.0 |
+          | Tesseract4Android | 4.7.0 |
+          | Room | 2.6.1 |
+          | Hilt | 2.50 |
+          | Architecture | MVVM + Clean Architecture |
+
+          ### Tessdata
+          Türkçe OCR için `tur.traineddata` indirin:
+          https://github.com/tesseract-ocr/tessdata/blob/main/tur.traineddata
+          EOF

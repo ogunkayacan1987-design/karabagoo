@@ -1,0 +1,171 @@
+name: Build LGS Question Extractor APK
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('lgs_extractor/**/*.gradle*', 'lgs_extractor/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Grant execute permission to gradlew
+        run: |
+          cd lgs_extractor
+          chmod +x gradlew 2>/dev/null || true
+          # Download gradlew wrapper if not present
+          if [ ! -f gradlew ]; then
+            gradle wrapper --gradle-version 8.4
+          fi
+
+      - name: Download Gradle wrapper
+        run: |
+          cd lgs_extractor
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            curl -L https://services.gradle.org/distributions/gradle-8.4-bin.zip -o gradle-8.4-bin.zip
+            unzip -q gradle-8.4-bin.zip -d /tmp/gradle
+            export PATH="/tmp/gradle/gradle-8.4/bin:$PATH"
+            gradle wrapper
+            rm -rf gradle-8.4-bin.zip
+          fi
+
+      - name: Create tessdata directory (placeholder - download manually)
+        run: |
+          mkdir -p lgs_extractor/app/src/main/assets/tessdata
+          # Note: Download tur.traineddata from:
+          # https://github.com/tesseract-ocr/tessdata/blob/main/tur.traineddata
+          # and place it in lgs_extractor/app/src/main/assets/tessdata/
+          echo "TESSDATA_NOTE=Download tur.traineddata for full Turkish OCR support" >> $GITHUB_STEP_SUMMARY
+
+      - name: Create local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > lgs_extractor/local.properties
+
+      - name: Create mipmap launcher icons (placeholder)
+        run: |
+          # Create placeholder launcher icons
+          for density in hdpi xhdpi xxhdpi xxxhdpi; do
+            mkdir -p lgs_extractor/app/src/main/res/mipmap-$density
+            # Create a simple 1x1 PNG as placeholder
+            printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82' > lgs_extractor/app/src/main/res/mipmap-$density/ic_launcher.png
+            cp lgs_extractor/app/src/main/res/mipmap-$density/ic_launcher.png lgs_extractor/app/src/main/res/mipmap-$density/ic_launcher_round.png
+          done
+
+      - name: Build Debug APK
+        run: |
+          cd lgs_extractor
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --build-cache \
+            --parallel \
+            -x test \
+            --stacktrace
+        env:
+          GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=512m"
+
+      - name: Build Release APK (unsigned)
+        run: |
+          cd lgs_extractor
+          ./gradlew assembleRelease \
+            --no-daemon \
+            --build-cache \
+            -x test
+        continue-on-error: true
+        env:
+          GRADLE_OPTS: "-Xmx4g -XX:MaxMetaspaceSize=512m"
+
+      - name: Find and rename APKs
+        run: |
+          find lgs_extractor -name "*.apk" -exec ls -la {} \;
+          mkdir -p apk-output
+          find lgs_extractor -name "*debug*.apk" -exec cp {} apk-output/LGSQuestionExtractor-debug.apk \; || true
+          find lgs_extractor -name "*release*.apk" -exec cp {} apk-output/LGSQuestionExtractor-release-unsigned.apk \; || true
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LGSQuestionExtractor-debug-apk
+          path: apk-output/LGSQuestionExtractor-debug.apk
+          if-no-files-found: warn
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: LGSQuestionExtractor-release-apk
+          path: apk-output/LGSQuestionExtractor-release-unsigned.apk
+          if-no-files-found: warn
+
+      - name: Create GitHub Release (on push to main)
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.run_number }}
+          name: "LGS Question Extractor v${{ github.run_number }}"
+          body: |
+            ## LGS Soru Çıkarıcı - Otomatik Build
+
+            ### Özellikler
+            - PDF → Görüntü dönüşümü (PdfRenderer, 300 DPI)
+            - OpenCV layout analizi (çok sütunlu sayfa desteği)
+            - Google ML Kit OCR (Türkçe desteği)
+            - LGS formatı soru tespiti (1., Soru N, A)B)C)D) vb.)
+            - Manuel düzeltme modu
+            - JPEG batch export
+
+            ### Notlar
+            - Tesseract için `tur.traineddata` dosyasını assets/tessdata/ klasörüne ekleyin
+            - OpenCV4Android otomatik Maven Central'dan indirilir
+
+            ### Commit
+            ${{ github.sha }}
+          files: |
+            apk-output/LGSQuestionExtractor-debug.apk
+          draft: false
+          prerelease: false
+
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Java Version | 17 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Min SDK | 26 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Target SDK | 34 |" >> $GITHUB_STEP_SUMMARY
+          echo "| OpenCV | 4.9.0 |" >> $GITHUB_STEP_SUMMARY
+          echo "| ML Kit | text-recognition 16.0.0 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Tesseract4Android | 4.7.0 |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Tessdata" >> $GITHUB_STEP_SUMMARY
+          echo "Turkish OCR için tur.traineddata dosyasını indirin:" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/tesseract-ocr/tessdata/blob/main/tur.traineddata" >> $GITHUB_STEP_SUMMARY
