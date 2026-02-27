@@ -79,24 +79,26 @@ class ClaudeVisionDetector @Inject constructor(
             .post(requestBody.toRequestBody("application/json".toMediaType()))
             .build()
 
-        return try {
-            val response = httpClient.newCall(request).execute()
-            val bodyStr = response.body?.string() ?: ""
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val response = httpClient.newCall(request).execute()
+                val bodyStr = response.body?.string() ?: ""
 
-            if (!response.isSuccessful) {
-                logToFile("API ERROR ${response.code}: $bodyStr")
-                return emptyList()
+                if (!response.isSuccessful) {
+                    logToFile("API ERROR ${response.code}: $bodyStr")
+                    return@withContext emptyList()
+                }
+
+                logToFile("API SUCCESS: Received response length = ${bodyStr.length} chars")
+                logToFile("RAW JSON DUMP START:\n$bodyStr\nRAW JSON DUMP END")
+
+                val results = parseApiResponse(bodyStr, columnIndex, regionRect)
+                logToFile("Parsed ${results.firstOrNull()?.textLines?.size ?: 0} OCR lines from response")
+                results
+            } catch (e: Exception) {
+                logToFile("EXCEPTION during API call or parsing: ${e.message}\n${e.stackTraceToString()}")
+                emptyList()
             }
-
-            logToFile("API SUCCESS: Received response length = ${bodyStr.length} chars")
-            logToFile("RAW JSON DUMP START:\n$bodyStr\nRAW JSON DUMP END")
-
-            val results = parseApiResponse(bodyStr, columnIndex, regionRect)
-            logToFile("Parsed ${results.firstOrNull()?.textLines?.size ?: 0} OCR lines from response")
-            results
-        } catch (e: Exception) {
-            logToFile("EXCEPTION during API call or parsing: ${e.message}\n${e.stackTraceToString()}")
-            emptyList()
         }
     }
 
