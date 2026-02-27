@@ -8,7 +8,6 @@ import com.lgsextractor.domain.model.DetectionConfig
 import com.lgsextractor.domain.model.PdfDocument
 import com.lgsextractor.domain.model.PdfPage
 import com.lgsextractor.domain.model.ProcessingPhase
-import com.lgsextractor.domain.model.ProcessingProgress
 import com.lgsextractor.domain.model.Question
 import com.lgsextractor.domain.repository.PdfRepository
 import com.lgsextractor.domain.repository.QuestionRepository
@@ -16,9 +15,11 @@ import com.lgsextractor.domain.usecase.ExtractQuestionsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -34,7 +35,7 @@ class PdfViewerViewModel @Inject constructor(
 
     sealed class ProcessingState {
         object Idle : ProcessingState()
-        data class InProgress(val progress: ProcessingProgress) : ProcessingState()
+        data class InProgress(val progress: com.lgsextractor.domain.model.ProcessingProgress) : ProcessingState()
         data class Complete(val questionCount: Int) : ProcessingState()
         data class Error(val message: String) : ProcessingState()
     }
@@ -51,11 +52,17 @@ class PdfViewerViewModel @Inject constructor(
     private val _processingState = MutableStateFlow<ProcessingState>(ProcessingState.Idle)
     val processingState: StateFlow<ProcessingState> = _processingState.asStateFlow()
 
-    private val _questionsOnPage = MutableStateFlow<List<Question>>(emptyList())
-    val questionsOnPage: StateFlow<List<Question>> = _questionsOnPage.asStateFlow()
-
     private val _config = MutableStateFlow(DetectionConfig())
     val config: StateFlow<DetectionConfig> = _config.asStateFlow()
+
+    /** Questions filtered to the currently visible page — derived from DB + currentPageNumber */
+    val questionsOnPage: StateFlow<List<Question>> =
+        combine(
+            questionRepository.getQuestionsForDocument(documentId),
+            _currentPageNumber
+        ) { questions, pageNum ->
+            questions.filter { it.pageNumber == pageNum }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private var extractionJob: Job? = null
 
@@ -69,11 +76,6 @@ class PdfViewerViewModel @Inject constructor(
             _document.value = doc
             if (doc != null) {
                 loadPage(0)
-                // Observe questions as they change
-                questionRepository.getQuestionsForDocument(documentId).collectLatest { questions ->
-                    val page = _currentPageNumber.value
-                    _questionsOnPage.value = questions.filter { it.pageNumber == page }
-                }
             }
         }
     }
@@ -82,14 +84,9 @@ class PdfViewerViewModel @Inject constructor(
         val doc = _document.value ?: return
         viewModelScope.launch {
             _currentPageNumber.value = pageNumber
-            val result = pdfRepository.renderPage(documentId, pageNumber, _config.value.renderDpi)
-            result.onSuccess { page ->
-                _currentPage.value = page
-                // Refresh questions for this page
-                questionRepository.getQuestionsForDocument(documentId).collectLatest { questions ->
-                    _questionsOnPage.value = questions.filter { it.pageNumber == pageNumber }
-                }
-            }
+            pdfRepository.renderPage(documentId, pageNumber, _config.value.renderDpi)
+                .onSuccess { page -> _currentPage.value = page }
+                .onFailure { android.util.Log.e("PdfViewerVM", "Render failed", it) }
         }
     }
 
@@ -100,11 +97,12 @@ class PdfViewerViewModel @Inject constructor(
         extractionJob = viewModelScope.launch {
             extractUseCase.execute(doc, _config.value, pageRange).collect { progress ->
                 _processingState.value = ProcessingState.InProgress(progress)
-                if (progress.phase == ProcessingPhase.COMPLETE) {
-                    _processingState.value = ProcessingState.Complete(progress.questionsFound)
-                }
-                if (progress.phase == ProcessingPhase.ERROR) {
-                    _processingState.value = ProcessingState.Error(progress.message)
+                when (progress.phase) {
+                    ProcessingPhase.COMPLETE ->
+                        _processingState.value = ProcessingState.Complete(progress.questionsFound)
+                    ProcessingPhase.ERROR ->
+                        _processingState.value = ProcessingState.Error(progress.message)
+                    else -> Unit
                 }
             }
         }
@@ -130,12 +128,8 @@ class PdfViewerViewModel @Inject constructor(
     }
 
     fun deleteQuestion(questionId: String) {
-        viewModelScope.launch {
-            questionRepository.deleteQuestion(questionId)
-        }
+        viewModelScope.launch { questionRepository.deleteQuestion(questionId) }
     }
 
-    fun updateConfig(config: DetectionConfig) {
-        _config.value = config
-    }
+    fun updateConfig(config: DetectionConfig) { _config.value = config }
 }

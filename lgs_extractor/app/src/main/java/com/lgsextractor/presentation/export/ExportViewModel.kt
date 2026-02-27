@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -128,9 +129,6 @@ class ExportViewModel @Inject constructor(
         }
     }
 
-    private suspend fun getQuestions(): List<Question> {
-        var result = emptyList<Question>()
-        questionRepository.getQuestionsForDocument(documentId).collect { result = it }
-        return result
-    }
+    private suspend fun getQuestions(): List<Question> =
+        questionRepository.getQuestionsForDocument(documentId).first()
 }

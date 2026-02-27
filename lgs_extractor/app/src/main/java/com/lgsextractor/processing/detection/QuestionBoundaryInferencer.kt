@@ -8,6 +8,7 @@ import com.lgsextractor.processing.ocr.OcrLine
 import com.lgsextractor.processing.ocr.OcrResult
 import javax.inject.Inject
 import javax.inject.Singleton
+import abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -191,15 +192,15 @@ class QuestionBoundaryInferencer @Inject constructor(
         if (colGaps.isEmpty()) return y
 
         val nearestGap = colGaps.minByOrNull { gap ->
-            if (above) kotlin.math.abs(gap.y - y) else kotlin.math.abs(gap.y + gap.height - y)
+            if (above) abs(gap.y - y) else abs(gap.y + gap.height - y)
         } ?: return y
 
         return if (above) {
             val gapEdge = nearestGap.y
-            if (kotlin.math.abs(gapEdge - y) <= threshold) gapEdge else y
+            if (abs(gapEdge - y) <= threshold) gapEdge else y
         } else {
             val gapEdge = nearestGap.y + nearestGap.height
-            if (kotlin.math.abs(gapEdge - y) <= threshold) gapEdge else y
+            if (abs(gapEdge - y) <= threshold) gapEdge else y
         }
     }
 

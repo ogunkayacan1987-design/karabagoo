@@ -173,31 +173,39 @@ class OpenCVProcessor @Inject constructor() {
      * Apply preprocessing to improve OCR accuracy on scanned images.
      * Returns a new bitmap with better contrast and deskewed if needed.
      */
+    /**
+     * Apply preprocessing to improve OCR accuracy on scanned images.
+     * Uses Gaussian blur for denoising + CLAHE for contrast enhancement.
+     * (Note: fastNlMeansDenoising avoided for Maven Central OpenCV compatibility)
+     */
     fun preprocessForOcr(bitmap: Bitmap): Bitmap {
-        val mat = Mat()
-        Utils.bitmapToMat(bitmap, mat)
+        return try {
+            val mat = Mat()
+            Utils.bitmapToMat(bitmap, mat)
+            val gray = toGrayscale(mat)
 
-        val gray = toGrayscale(mat)
+            // Gentle Gaussian blur for noise reduction
+            val blurred = Mat()
+            Imgproc.GaussianBlur(gray, blurred, Size(3.0, 3.0), 0.0)
 
-        // Denoise
-        val denoised = Mat()
-        org.opencv.photo.Photo.fastNlMeansDenoising(gray, denoised, 10f, 7, 21)
+            // CLAHE for adaptive contrast enhancement
+            val clahe = Imgproc.createCLAHE(2.0, Size(8.0, 8.0))
+            val enhanced = Mat()
+            clahe.apply(blurred, enhanced)
 
-        // CLAHE (Contrast Limited Adaptive Histogram Equalization)
-        val clahe = Imgproc.createCLAHE(2.0, Size(8.0, 8.0))
-        val enhanced = Mat()
-        clahe.apply(denoised, enhanced)
+            // Convert back to ARGB bitmap
+            val resultMat = Mat()
+            Imgproc.cvtColor(enhanced, resultMat, Imgproc.COLOR_GRAY2RGBA)
+            val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+            Utils.matToBitmap(resultMat, result)
 
-        // Convert back to bitmap
-        val resultMat = Mat()
-        Imgproc.cvtColor(enhanced, resultMat, Imgproc.COLOR_GRAY2RGBA)
-        val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-        Utils.matToBitmap(resultMat, result)
-
-        mat.release(); gray.release(); denoised.release()
-        enhanced.release(); resultMat.release()
-
-        return result
+            mat.release(); gray.release(); blurred.release()
+            enhanced.release(); resultMat.release()
+            result
+        } catch (e: Exception) {
+            android.util.Log.w("OpenCVProcessor", "Preprocessing failed, using original", e)
+            bitmap
+        }
     }
 
     // ---- Private helpers ----
@@ -216,12 +224,13 @@ class OpenCVProcessor @Inject constructor() {
 
     private fun adaptiveThreshold(gray: Mat): Mat {
         val thresh = Mat()
+        // Positional args — Java interop does not support named parameters
         Imgproc.adaptiveThreshold(
             gray, thresh, 255.0,
             Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C,
-            Imgproc.THRESH_BINARY_INV,  // INV: text=white, background=black
-            blockSize = 15,
-            C = 8.0
+            Imgproc.THRESH_BINARY_INV,   // INV: text=white, background=black
+            15,   // blockSize (must be odd)
+            8.0   // C constant
         )
         return thresh
     }
@@ -282,7 +291,7 @@ class OpenCVProcessor @Inject constructor() {
         // Find the center region (30%-70% of page) with minimum occupancy
         val centerStart = (sliceCount * 0.30).toInt()
         val centerEnd = (sliceCount * 0.70).toInt()
-        val centerMin = occupancy.slice(centerStart..centerEnd).min() ?: 0
+        val centerMin = occupancy.slice(centerStart..centerEnd).minOrNull() ?: 0
         val centerAvg = occupancy.slice(centerStart..centerEnd).average()
 
         // If center region has significantly lower density → two-column layout

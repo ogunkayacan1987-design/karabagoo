@@ -78,17 +78,27 @@ jobs:
           print('Icons generated successfully')
           PYEOF
 
-      - name: Set up Gradle wrapper
+      - name: Set up Gradle wrapper (download JAR + ensure gradlew)
         run: |
-          cd lgs_extractor
-          if [ ! -f gradlew ]; then
-            echo "Downloading Gradle 8.4 to generate wrapper..."
-            curl -sL https://services.gradle.org/distributions/gradle-8.4-bin.zip -o /tmp/gradle.zip
-            unzip -q /tmp/gradle.zip -d /tmp/
-            export PATH="/tmp/gradle-8.4/bin:$PATH"
-            gradle wrapper --gradle-version=8.4
+          # Download gradle-wrapper.jar (binary needed by gradlew script)
+          mkdir -p lgs_extractor/gradle/wrapper
+          WRAPPER_JAR="lgs_extractor/gradle/wrapper/gradle-wrapper.jar"
+          if [ ! -f "$WRAPPER_JAR" ]; then
+            echo "Downloading gradle-wrapper.jar..."
+            curl -sL \
+              "https://github.com/gradle/gradle/raw/v8.4.0/gradle/wrapper/gradle-wrapper.jar" \
+              -o "$WRAPPER_JAR" || \
+            # Fallback: generate via full gradle distribution
+            (
+              curl -sL https://services.gradle.org/distributions/gradle-8.4-bin.zip -o /tmp/gradle.zip
+              unzip -q /tmp/gradle.zip -d /tmp/
+              cd lgs_extractor
+              /tmp/gradle-8.4/bin/gradle wrapper --gradle-version=8.4 --distribution-type=bin
+            )
           fi
-          chmod +x gradlew
+          chmod +x lgs_extractor/gradlew
+          echo "Gradle wrapper ready: $(ls -la lgs_extractor/gradlew)"
+          echo "Wrapper JAR: $(ls -la $WRAPPER_JAR)"
 
       - name: Build Debug APK
         working-directory: lgs_extractor
@@ -98,8 +108,7 @@ jobs:
             --build-cache \
             --parallel \
             -x test \
-            --stacktrace \
-            --info
+            --stacktrace
         env:
           GRADLE_OPTS: -Xmx4g -XX:MaxMetaspaceSize=512m -Dorg.gradle.daemon=false
 

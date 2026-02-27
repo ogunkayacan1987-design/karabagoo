@@ -110,7 +110,7 @@ class AdaptiveLearningEngine @Inject constructor(
         if (values.isEmpty()) return 0.0
         val mean = values.average()
         val variance = values.map { (it - mean) * (it - mean) }.average()
-        return Math.sqrt(variance)
+        return kotlin.math.sqrt(variance)
     }
 
     /**
