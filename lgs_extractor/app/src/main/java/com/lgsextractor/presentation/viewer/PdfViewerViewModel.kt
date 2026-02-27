@@ -143,11 +143,19 @@ class PdfViewerViewModel @Inject constructor(
         _config.value = _config.value.copy(useGeminiVision = enabled)
     }
 
+    fun setGeminiModel(model: String) {
+        _config.value = _config.value.copy(geminiModel = model)
+    }
+
     fun saveClaudeApiKey(key: String) {
         viewModelScope.launch { apiKeyManager.saveClaudeApiKey(key) }
     }
 
     fun saveGeminiApiKey(key: String) {
         viewModelScope.launch { apiKeyManager.saveGeminiApiKey(key) }
+    }
+    
+    fun saveGeminiModel(model: String) {
+        viewModelScope.launch { apiKeyManager.saveGeminiModel(model) }
     }
 }

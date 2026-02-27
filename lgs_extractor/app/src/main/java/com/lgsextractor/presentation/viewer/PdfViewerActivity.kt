@@ -216,6 +216,7 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
             
             val existingGeminiKey = viewModel.apiKeyManager.getGeminiApiKey() ?: ""
             val geminiEnabled = viewModel.config.value.useGeminiVision
+            val existingGeminiModel = viewModel.apiKeyManager.getGeminiModel() ?: viewModel.config.value.geminiModel
 
             val layout = LinearLayout(this@PdfViewerActivity).apply {
                 orientation = LinearLayout.VERTICAL
@@ -232,6 +233,15 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
                 setText(existingGeminiKey)
                 inputType = android.text.InputType.TYPE_CLASS_TEXT or
                         android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+            val labelGeminiModel = TextView(this@PdfViewerActivity).apply {
+                text = "Gemini YZ Modeli (gemini-1.5-pro)"
+                setPadding(0, 16, 0, 8)
+            }
+            val editGeminiModel = EditText(this@PdfViewerActivity).apply {
+                hint = "gemini-1.5-pro"
+                setText(existingGeminiModel)
+                inputType = android.text.InputType.TYPE_CLASS_TEXT
             }
             val checkGeminiVision = CheckBox(this@PdfViewerActivity).apply {
                 text = "Gemini Vision ile soru tespit et (Önerilen)"
@@ -255,6 +265,8 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
 
             layout.addView(labelGeminiKey)
             layout.addView(editGeminiKey)
+            layout.addView(labelGeminiModel)
+            layout.addView(editGeminiModel)
             layout.addView(checkGeminiVision)
             layout.addView(labelClaudeKey)
             layout.addView(editClaudeKey)
@@ -279,6 +291,13 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
                     
                     val newGeminiKey = editGeminiKey.text.toString().trim()
                     if (newGeminiKey.isNotBlank()) viewModel.saveGeminiApiKey(newGeminiKey)
+                    
+                    val newGeminiModel = editGeminiModel.text.toString().trim()
+                    if (newGeminiModel.isNotBlank()) {
+                        viewModel.saveGeminiModel(newGeminiModel)
+                        viewModel.setGeminiModel(newGeminiModel)
+                    }
+                    
                     viewModel.setGeminiVisionEnabled(checkGeminiVision.isChecked)
 
                     Snackbar.make(binding.root, "Ayarlar kaydedildi", Snackbar.LENGTH_SHORT).show()

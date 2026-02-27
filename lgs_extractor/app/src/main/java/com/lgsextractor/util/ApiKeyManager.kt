@@ -20,6 +20,7 @@ class ApiKeyManager @Inject constructor(
     companion object {
         private val KEY_CLAUDE_API_KEY = stringPreferencesKey("claude_api_key")
         private val KEY_GEMINI_API_KEY = stringPreferencesKey("gemini_api_key")
+        private val KEY_GEMINI_MODEL = stringPreferencesKey("gemini_model")
     }
 
     val claudeApiKey: Flow<String?> = context.apiKeyDataStore.data.map { prefs ->
@@ -29,12 +30,19 @@ class ApiKeyManager @Inject constructor(
     val geminiApiKey: Flow<String?> = context.apiKeyDataStore.data.map { prefs ->
         prefs[KEY_GEMINI_API_KEY]?.takeIf { it.isNotBlank() }
     }
+    
+    val geminiModel: Flow<String?> = context.apiKeyDataStore.data.map { prefs ->
+        prefs[KEY_GEMINI_MODEL]?.takeIf { it.isNotBlank() }
+    }
 
     suspend fun getClaudeApiKey(): String? =
         claudeApiKey.firstOrNull()
 
     suspend fun getGeminiApiKey(): String? =
         geminiApiKey.firstOrNull()
+        
+    suspend fun getGeminiModel(): String? =
+        geminiModel.firstOrNull()
 
     suspend fun saveClaudeApiKey(apiKey: String) {
         context.apiKeyDataStore.edit { prefs ->
@@ -47,6 +55,12 @@ class ApiKeyManager @Inject constructor(
             prefs[KEY_GEMINI_API_KEY] = apiKey.trim()
         }
     }
+    
+    suspend fun saveGeminiModel(model: String) {
+        context.apiKeyDataStore.edit { prefs ->
+            prefs[KEY_GEMINI_MODEL] = model.trim()
+        }
+    }
 
     suspend fun clearClaudeApiKey() {
         context.apiKeyDataStore.edit { prefs ->
@@ -57,6 +71,7 @@ class ApiKeyManager @Inject constructor(
     suspend fun clearGeminiApiKey() {
         context.apiKeyDataStore.edit { prefs ->
             prefs.remove(KEY_GEMINI_API_KEY)
+            prefs.remove(KEY_GEMINI_MODEL)
         }
     }
 
