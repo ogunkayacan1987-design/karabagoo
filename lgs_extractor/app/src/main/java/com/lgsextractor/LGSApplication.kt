@@ -4,16 +4,36 @@ import android.app.Application
 import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
 import org.opencv.android.OpenCVLoader
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @HiltAndroidApp
 class LGSApplication : Application(), Configuration.Provider {
 
     override fun onCreate() {
+        setupCrashLogger()
         super.onCreate()
         initOpenCV()
-        // WorkManager is NOT manually initialized here.
-        // This class implements Configuration.Provider so WorkManager
-        // lazily uses workManagerConfiguration on first access.
+    }
+
+    private fun setupCrashLogger() {
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val logFile = File(getExternalFilesDir(null), "crash_log.txt")
+                val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+                val text = buildString {
+                    appendLine("=== CRASH $time ===")
+                    appendLine("Thread: ${thread.name}")
+                    appendLine(throwable.stackTraceToString())
+                }
+                logFile.writeText(text)
+                android.util.Log.e("LGSCrash", text)
+            } catch (_: Exception) {}
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
     }
 
     private fun initOpenCV() {
@@ -23,8 +43,8 @@ class LGSApplication : Application(), Configuration.Provider {
             } else {
                 android.util.Log.i("LGSApp", "OpenCV initialized: ${OpenCVLoader.OPENCV_VERSION}")
             }
-        } catch (e: UnsatisfiedLinkError) {
-            android.util.Log.e("LGSApp", "OpenCV native library not found, OCR will use ML Kit only", e)
+        } catch (e: Throwable) {
+            android.util.Log.e("LGSApp", "OpenCV init error", e)
         }
     }
 
@@ -33,3 +53,4 @@ class LGSApplication : Application(), Configuration.Provider {
             .setMinimumLoggingLevel(android.util.Log.INFO)
             .build()
 }
+
