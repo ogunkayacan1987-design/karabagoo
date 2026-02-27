@@ -38,14 +38,19 @@ data class DetectionConfig(
     // Claude Vision AI
     val useClaudeVision: Boolean = false,
     val claudeModel: String = "claude-opus-4-6",
-    val claudeMaxTokens: Int = 1024
+    val claudeMaxTokens: Int = 1024,
+    
+    // Gemini Vision AI
+    val useGeminiVision: Boolean = false,
+    val geminiModel: String = "gemini-1.5-flash-latest"
 )
 
 enum class OcrEngineType {
     ML_KIT_PRIMARY,         // Google ML Kit (default, fast)
     TESSERACT_PRIMARY,      // Tesseract (better for scanned PDFs)
     HYBRID,                 // ML Kit first, Tesseract fallback
-    CLAUDE_VISION           // Claude Vision API (highest accuracy)
+    CLAUDE_VISION,          // Claude Vision API (highest accuracy)
+    GEMINI_VISION           // Gemini Vision AI API (highest accuracy, fallback)
 }
 
 /**

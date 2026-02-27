@@ -211,8 +211,11 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
 
     private fun openSettings() {
         lifecycleScope.launch {
-            val existingKey = viewModel.apiKeyManager.getClaudeApiKey() ?: ""
+            val existingClaudeKey = viewModel.apiKeyManager.getClaudeApiKey() ?: ""
             val claudeEnabled = viewModel.config.value.useClaudeVision
+            
+            val existingGeminiKey = viewModel.apiKeyManager.getGeminiApiKey() ?: ""
+            val geminiEnabled = viewModel.config.value.useGeminiVision
 
             val layout = LinearLayout(this@PdfViewerActivity).apply {
                 orientation = LinearLayout.VERTICAL
@@ -220,35 +223,64 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
                 setPadding(pad, pad, pad, pad)
             }
 
-            val labelApiKey = TextView(this@PdfViewerActivity).apply {
-                text = "Claude API Key"
+            val labelGeminiKey = TextView(this@PdfViewerActivity).apply {
+                text = "Gemini API Key"
+                setPadding(0, 16, 0, 8)
             }
-            val editApiKey = EditText(this@PdfViewerActivity).apply {
+            val editGeminiKey = EditText(this@PdfViewerActivity).apply {
+                hint = "AIza..."
+                setText(existingGeminiKey)
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                        android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+            val checkGeminiVision = CheckBox(this@PdfViewerActivity).apply {
+                text = "Gemini Vision ile soru tespit et (Önerilen)"
+                isChecked = geminiEnabled
+            }
+
+            val labelClaudeKey = TextView(this@PdfViewerActivity).apply {
+                text = "Claude API Key"
+                setPadding(0, 32, 0, 8)
+            }
+            val editClaudeKey = EditText(this@PdfViewerActivity).apply {
                 hint = "sk-ant-..."
-                setText(existingKey)
+                setText(existingClaudeKey)
                 inputType = android.text.InputType.TYPE_CLASS_TEXT or
                         android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             }
             val checkClaudeVision = CheckBox(this@PdfViewerActivity).apply {
-                text = "Claude Vision ile soru tespit et (daha yüksek doğruluk)"
+                text = "Claude Vision ile soru tespit et"
                 isChecked = claudeEnabled
             }
 
-            layout.addView(labelApiKey)
-            layout.addView(editApiKey)
+            layout.addView(labelGeminiKey)
+            layout.addView(editGeminiKey)
+            layout.addView(checkGeminiVision)
+            layout.addView(labelClaudeKey)
+            layout.addView(editClaudeKey)
             layout.addView(checkClaudeVision)
+
+            // Ensure mutually exclusive checking for AI vision engines to prevent double-billing and collisions
+            checkGeminiVision.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) checkClaudeVision.isChecked = false
+            }
+            checkClaudeVision.setOnCheckedChangeListener { _, isChecked ->
+                if (isChecked) checkGeminiVision.isChecked = false
+            }
 
             MaterialAlertDialogBuilder(this@PdfViewerActivity)
                 .setTitle("AI Ayarları")
                 .setView(layout)
                 .setNegativeButton("İptal", null)
                 .setPositiveButton("Kaydet") { _, _ ->
-                    val newKey = editApiKey.text.toString().trim()
-                    val useVision = checkClaudeVision.isChecked
-                    if (newKey.isNotBlank()) {
-                        viewModel.saveClaudeApiKey(newKey)
-                    }
-                    viewModel.setClaudeVisionEnabled(useVision)
+                    val newClaudeKey = editClaudeKey.text.toString().trim()
+                    if (newClaudeKey.isNotBlank()) viewModel.saveClaudeApiKey(newClaudeKey)
+                    viewModel.setClaudeVisionEnabled(checkClaudeVision.isChecked)
+                    
+                    val newGeminiKey = editGeminiKey.text.toString().trim()
+                    if (newGeminiKey.isNotBlank()) viewModel.saveGeminiApiKey(newGeminiKey)
+                    viewModel.setGeminiVisionEnabled(checkGeminiVision.isChecked)
+
                     Snackbar.make(binding.root, "Ayarlar kaydedildi", Snackbar.LENGTH_SHORT).show()
                 }
                 .show()

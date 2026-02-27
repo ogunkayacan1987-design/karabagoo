@@ -35,16 +35,19 @@ class OcrEngine @Inject constructor(
     private val mlKitOcr: MLKitOcrEngine,
     private val tesseractOcr: TesseractOcrEngine,
     private val cvProcessor: OpenCVProcessor,
-    private val claudeVisionDetector: ClaudeVisionDetector
+    private val claudeVisionDetector: ClaudeVisionDetector,
+    private val geminiVisionDetector: GeminiVisionDetector
 ) {
     suspend fun recognizeText(
         page: PdfPage,
         layoutInfo: OpenCVProcessor.LayoutInfo,
         config: DetectionConfig,
-        claudeApiKey: String? = null
+        claudeApiKey: String? = null,
+        geminiApiKey: String? = null
     ): List<OcrResult> {
         val results = mutableListOf<OcrResult>()
         val claudeKey = claudeApiKey?.takeIf { it.isNotBlank() }
+        val geminiKey = geminiApiKey?.takeIf { it.isNotBlank() }
 
         // Process each detected column separately for better accuracy
         layoutInfo.columnBoundaries.forEachIndexed { colIdx, column ->
@@ -63,6 +66,23 @@ class OcrEngine @Inject constructor(
             } else columnBitmap
 
             val result = when {
+                config.useGeminiVision || config.ocrEngine == OcrEngineType.GEMINI_VISION -> {
+                    if (geminiKey != null) {
+                        // Obtain baseline bounding boxes from ML Kit first
+                        val mlKitResult = mlKitOcr.recognizeText(processedBitmap, colIdx, regionRect)
+                        val mlKitLines = mlKitResult?.textLines ?: emptyList()
+
+                        val geminiResults = geminiVisionDetector.detectQuestions(
+                            pageBitmap = processedBitmap,
+                            apiKey = geminiKey,
+                            config = config,
+                            columnIndex = colIdx,
+                            regionRect = regionRect,
+                            mlKitLines = mlKitLines
+                        )
+                        if (geminiResults.isNotEmpty()) geminiResults.first() else null
+                    } else null
+                }
                 config.useClaudeVision || config.ocrEngine == OcrEngineType.CLAUDE_VISION -> {
                     if (claudeKey != null) {
                         // Obtain baseline bounding boxes from ML Kit first

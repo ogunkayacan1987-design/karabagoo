@@ -35,8 +35,13 @@ class ExtractQuestionsUseCase @Inject constructor(
         val allQuestions = mutableListOf<Question>()
 
         // Retrieve Claude API key once for the entire extraction session
+        // Retrieve Claude API key once for the entire extraction session
         val claudeApiKey = if (config.useClaudeVision || config.ocrEngine == com.lgsextractor.domain.model.OcrEngineType.CLAUDE_VISION) {
             apiKeyManager.getClaudeApiKey()
+        } else null
+
+        val geminiApiKey = if (config.useGeminiVision || config.ocrEngine == com.lgsextractor.domain.model.OcrEngineType.GEMINI_VISION) {
+            apiKeyManager.getGeminiApiKey()
         } else null
 
         emit(ProcessingProgress(0, pages.count(), com.lgsextractor.domain.model.ProcessingPhase.RENDERING_PDF))
@@ -78,7 +83,7 @@ class ExtractQuestionsUseCase @Inject constructor(
                 message = "Sayfa ${pageNum + 1} OCR işleniyor..."
             ))
 
-            val ocrResult = ocrEngine.recognizeText(page, layoutInfo, config, claudeApiKey)
+            val ocrResult = ocrEngine.recognizeText(page, layoutInfo, config, claudeApiKey, geminiApiKey)
 
             // 4. Detect questions
             emit(ProcessingProgress(

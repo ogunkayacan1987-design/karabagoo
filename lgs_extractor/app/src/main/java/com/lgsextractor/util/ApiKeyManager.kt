@@ -19,18 +19,32 @@ class ApiKeyManager @Inject constructor(
 ) {
     companion object {
         private val KEY_CLAUDE_API_KEY = stringPreferencesKey("claude_api_key")
+        private val KEY_GEMINI_API_KEY = stringPreferencesKey("gemini_api_key")
     }
 
     val claudeApiKey: Flow<String?> = context.apiKeyDataStore.data.map { prefs ->
         prefs[KEY_CLAUDE_API_KEY]?.takeIf { it.isNotBlank() }
     }
+    
+    val geminiApiKey: Flow<String?> = context.apiKeyDataStore.data.map { prefs ->
+        prefs[KEY_GEMINI_API_KEY]?.takeIf { it.isNotBlank() }
+    }
 
     suspend fun getClaudeApiKey(): String? =
         claudeApiKey.firstOrNull()
 
+    suspend fun getGeminiApiKey(): String? =
+        geminiApiKey.firstOrNull()
+
     suspend fun saveClaudeApiKey(apiKey: String) {
         context.apiKeyDataStore.edit { prefs ->
             prefs[KEY_CLAUDE_API_KEY] = apiKey.trim()
+        }
+    }
+
+    suspend fun saveGeminiApiKey(apiKey: String) {
+        context.apiKeyDataStore.edit { prefs ->
+            prefs[KEY_GEMINI_API_KEY] = apiKey.trim()
         }
     }
 
@@ -40,6 +54,15 @@ class ApiKeyManager @Inject constructor(
         }
     }
 
+    suspend fun clearGeminiApiKey() {
+        context.apiKeyDataStore.edit { prefs ->
+            prefs.remove(KEY_GEMINI_API_KEY)
+        }
+    }
+
     suspend fun hasClaudeApiKey(): Boolean =
         !getClaudeApiKey().isNullOrBlank()
+        
+    suspend fun hasGeminiApiKey(): Boolean =
+        !getGeminiApiKey().isNullOrBlank()
 }
