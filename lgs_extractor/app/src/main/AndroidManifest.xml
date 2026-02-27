@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"
         tools:ignore="ScopedStorage" />
 
+    <!-- Network access for Claude Vision API -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Foreground service for background processing -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />

@@ -2,7 +2,6 @@ package com.lgsextractor
 
 import android.app.Application
 import androidx.work.Configuration
-import androidx.work.WorkManager
 import dagger.hilt.android.HiltAndroidApp
 import org.opencv.android.OpenCVLoader
 
@@ -12,20 +11,21 @@ class LGSApplication : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         initOpenCV()
-        initWorkManager()
+        // WorkManager is NOT manually initialized here.
+        // This class implements Configuration.Provider so WorkManager
+        // lazily uses workManagerConfiguration on first access.
     }
 
     private fun initOpenCV() {
-        if (!OpenCVLoader.initLocal()) {
-            // OpenCV init failed - will fallback to pure ML Kit OCR
-            android.util.Log.e("LGSApp", "OpenCV initialization failed")
-        } else {
-            android.util.Log.i("LGSApp", "OpenCV initialized: ${OpenCVLoader.OPENCV_VERSION}")
+        try {
+            if (!OpenCVLoader.initLocal()) {
+                android.util.Log.e("LGSApp", "OpenCV initialization failed")
+            } else {
+                android.util.Log.i("LGSApp", "OpenCV initialized: ${OpenCVLoader.OPENCV_VERSION}")
+            }
+        } catch (e: UnsatisfiedLinkError) {
+            android.util.Log.e("LGSApp", "OpenCV native library not found, OCR will use ML Kit only", e)
         }
-    }
-
-    private fun initWorkManager() {
-        WorkManager.initialize(this, workManagerConfiguration)
     }
 
     override val workManagerConfiguration: Configuration
