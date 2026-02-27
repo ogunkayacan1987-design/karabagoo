@@ -8,7 +8,7 @@ import com.lgsextractor.processing.ocr.OcrLine
 import com.lgsextractor.processing.ocr.OcrResult
 import javax.inject.Inject
 import javax.inject.Singleton
-import abs
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 

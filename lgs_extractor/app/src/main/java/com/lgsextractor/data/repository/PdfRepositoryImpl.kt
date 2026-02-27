@@ -103,7 +103,7 @@ class PdfRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun deletePdfDocument(id: String) = withContext(Dispatchers.IO) {
+    override suspend fun deletePdfDocument(id: String): Unit = withContext(Dispatchers.IO) {
         pdfDocumentDao.deleteDocument(id)
         // Clean up rendered page cache
         File(pdfCacheDir, id).deleteRecursively()

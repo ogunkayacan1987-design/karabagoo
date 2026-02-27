@@ -52,10 +52,11 @@ class ExtractQuestionsUseCase @Inject constructor(
             ))
 
             val pageResult = pdfRepository.renderPage(document.id, pageNum, config.renderDpi)
-            val page = pageResult.getOrElse {
-                android.util.Log.e("ExtractUseCase", "Page $pageNum render failed", it)
+            if (pageResult.isFailure) {
+                android.util.Log.e("ExtractUseCase", "Page $pageNum render failed", pageResult.exceptionOrNull())
                 continue
             }
+            val page = pageResult.getOrThrow()
 
             // 2. OpenCV layout analysis
             emit(ProcessingProgress(
