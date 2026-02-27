@@ -12,6 +12,7 @@ import com.lgsextractor.processing.cv.OpenCVProcessor
 import com.lgsextractor.processing.ocr.OcrEngine
 import com.lgsextractor.processing.detection.QuestionDetector
 import com.lgsextractor.processing.export.CropEngine
+import com.lgsextractor.util.ApiKeyManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import javax.inject.Inject
@@ -23,7 +24,8 @@ class ExtractQuestionsUseCase @Inject constructor(
     private val cvProcessor: OpenCVProcessor,
     private val ocrEngine: OcrEngine,
     private val questionDetector: QuestionDetector,
-    private val cropEngine: CropEngine
+    private val cropEngine: CropEngine,
+    private val apiKeyManager: ApiKeyManager
 ) {
     fun execute(
         document: PdfDocument,
@@ -33,6 +35,11 @@ class ExtractQuestionsUseCase @Inject constructor(
 
         val pages = pageRange ?: (0 until document.pageCount)
         val allQuestions = mutableListOf<Question>()
+
+        // Retrieve Claude API key once for the entire extraction session
+        val claudeApiKey = if (config.useClaudeVision || config.ocrEngine == com.lgsextractor.domain.model.OcrEngineType.CLAUDE_VISION) {
+            apiKeyManager.getClaudeApiKey()
+        } else null
 
         emit(ProcessingProgress(0, pages.count(), com.lgsextractor.domain.model.ProcessingPhase.RENDERING_PDF))
 
@@ -72,7 +79,7 @@ class ExtractQuestionsUseCase @Inject constructor(
                 message = "Sayfa ${pageNum + 1} OCR işleniyor..."
             ))
 
-            val ocrResult = ocrEngine.recognizeText(page, layoutInfo, config)
+            val ocrResult = ocrEngine.recognizeText(page, layoutInfo, config, claudeApiKey)
 
             // 4. Detect questions
             emit(ProcessingProgress(

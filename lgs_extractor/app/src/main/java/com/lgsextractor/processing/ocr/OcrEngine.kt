@@ -28,19 +28,42 @@ data class OcrLine(
 )
 
 /**
- * Facade that delegates to ML Kit or Tesseract based on config.
+ * Facade that delegates to ML Kit, Tesseract, or Claude Vision based on config.
  */
 @Singleton
 class OcrEngine @Inject constructor(
     private val mlKitOcr: MLKitOcrEngine,
     private val tesseractOcr: TesseractOcrEngine,
-    private val cvProcessor: OpenCVProcessor
+    private val cvProcessor: OpenCVProcessor,
+    private val claudeVisionDetector: ClaudeVisionDetector
 ) {
     suspend fun recognizeText(
         page: PdfPage,
         layoutInfo: OpenCVProcessor.LayoutInfo,
-        config: DetectionConfig
+        config: DetectionConfig,
+        claudeApiKey: String? = null
     ): List<OcrResult> {
+        // If Claude Vision is enabled and API key is available, use it for the full page
+        if (config.useClaudeVision || config.ocrEngine == OcrEngineType.CLAUDE_VISION) {
+            val key = claudeApiKey?.takeIf { it.isNotBlank() }
+            if (key != null) {
+                val pageBitmap = BitmapFactory.decodeFile(page.bitmapPath)
+                if (pageBitmap != null) {
+                    val fullPageRect = Rect(0, 0, page.width, page.height)
+                    val claudeResults = claudeVisionDetector.detectQuestions(
+                        pageBitmap = pageBitmap,
+                        apiKey = key,
+                        config = config,
+                        columnIndex = 0,
+                        regionRect = fullPageRect
+                    )
+                    pageBitmap.recycle()
+                    if (claudeResults.isNotEmpty()) return claudeResults
+                }
+            }
+            // Fall through to local OCR if Claude Vision fails or no key
+        }
+
         val results = mutableListOf<OcrResult>()
 
         // Process each detected column separately for better accuracy
@@ -60,7 +83,7 @@ class OcrEngine @Inject constructor(
             } else columnBitmap
 
             val result = when (config.ocrEngine) {
-                OcrEngineType.ML_KIT_PRIMARY -> {
+                OcrEngineType.ML_KIT_PRIMARY, OcrEngineType.CLAUDE_VISION -> {
                     mlKitOcr.recognizeText(processedBitmap, colIdx, regionRect)
                         ?: tesseractOcr.recognizeText(processedBitmap, colIdx, regionRect)
                 }

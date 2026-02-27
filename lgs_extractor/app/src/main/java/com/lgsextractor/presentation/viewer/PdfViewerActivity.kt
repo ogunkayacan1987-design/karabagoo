@@ -6,7 +6,11 @@ import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.widget.CheckBox
+import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.SeekBar
+import android.widget.TextView
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -20,6 +24,7 @@ import com.lgsextractor.presentation.export.ExportActivity
 import com.lgsextractor.presentation.questions.QuestionListActivity
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
@@ -205,8 +210,49 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
     }
 
     private fun openSettings() {
-        // TODO: Open settings/config dialog
-        Snackbar.make(binding.root, "Ayarlar yakında...", Snackbar.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            val existingKey = viewModel.apiKeyManager.getClaudeApiKey() ?: ""
+            val claudeEnabled = viewModel.config.value.useClaudeVision
+
+            val layout = LinearLayout(this@PdfViewerActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                val pad = (16 * resources.displayMetrics.density).toInt()
+                setPadding(pad, pad, pad, pad)
+            }
+
+            val labelApiKey = TextView(this@PdfViewerActivity).apply {
+                text = "Claude API Key"
+            }
+            val editApiKey = EditText(this@PdfViewerActivity).apply {
+                hint = "sk-ant-..."
+                setText(existingKey)
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                        android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+            val checkClaudeVision = CheckBox(this@PdfViewerActivity).apply {
+                text = "Claude Vision ile soru tespit et (daha yüksek doğruluk)"
+                isChecked = claudeEnabled
+            }
+
+            layout.addView(labelApiKey)
+            layout.addView(editApiKey)
+            layout.addView(checkClaudeVision)
+
+            MaterialAlertDialogBuilder(this@PdfViewerActivity)
+                .setTitle("AI Ayarları")
+                .setView(layout)
+                .setNegativeButton("İptal", null)
+                .setPositiveButton("Kaydet") { _, _ ->
+                    val newKey = editApiKey.text.toString().trim()
+                    val useVision = checkClaudeVision.isChecked
+                    if (newKey.isNotBlank()) {
+                        viewModel.saveClaudeApiKey(newKey)
+                    }
+                    viewModel.setClaudeVisionEnabled(useVision)
+                    Snackbar.make(binding.root, "Ayarlar kaydedildi", Snackbar.LENGTH_SHORT).show()
+                }
+                .show()
+        }
     }
 
     // ---- QuestionOverlayView.OverlayListener ----

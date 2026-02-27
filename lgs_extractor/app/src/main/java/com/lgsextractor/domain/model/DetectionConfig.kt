@@ -33,13 +33,19 @@ data class DetectionConfig(
     val exportMaxWidthPx: Int = 1200,
 
     // Learning
-    val enableAdaptiveLearning: Boolean = true
+    val enableAdaptiveLearning: Boolean = true,
+
+    // Claude Vision AI
+    val useClaudeVision: Boolean = false,
+    val claudeModel: String = "claude-opus-4-6",
+    val claudeMaxTokens: Int = 1024
 )
 
 enum class OcrEngineType {
     ML_KIT_PRIMARY,         // Google ML Kit (default, fast)
     TESSERACT_PRIMARY,      // Tesseract (better for scanned PDFs)
-    HYBRID                  // ML Kit first, Tesseract fallback
+    HYBRID,                 // ML Kit first, Tesseract fallback
+    CLAUDE_VISION           // Claude Vision API (highest accuracy)
 }
 
 /**

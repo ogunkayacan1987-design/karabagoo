@@ -12,6 +12,7 @@ import com.lgsextractor.domain.model.Question
 import com.lgsextractor.domain.repository.PdfRepository
 import com.lgsextractor.domain.repository.QuestionRepository
 import com.lgsextractor.domain.usecase.ExtractQuestionsUseCase
+import com.lgsextractor.util.ApiKeyManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +29,7 @@ class PdfViewerViewModel @Inject constructor(
     private val pdfRepository: PdfRepository,
     private val questionRepository: QuestionRepository,
     private val extractUseCase: ExtractQuestionsUseCase,
+    val apiKeyManager: ApiKeyManager,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
@@ -132,4 +134,12 @@ class PdfViewerViewModel @Inject constructor(
     }
 
     fun updateConfig(config: DetectionConfig) { _config.value = config }
+
+    fun setClaudeVisionEnabled(enabled: Boolean) {
+        _config.value = _config.value.copy(useClaudeVision = enabled)
+    }
+
+    fun saveClaudeApiKey(key: String) {
+        viewModelScope.launch { apiKeyManager.saveClaudeApiKey(key) }
+    }
 }
