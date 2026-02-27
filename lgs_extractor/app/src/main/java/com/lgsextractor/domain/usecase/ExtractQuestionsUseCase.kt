@@ -7,7 +7,6 @@ import com.lgsextractor.domain.model.ProcessingResult
 import com.lgsextractor.domain.model.Question
 import com.lgsextractor.domain.repository.PdfRepository
 import com.lgsextractor.domain.repository.QuestionRepository
-import com.lgsextractor.processing.pdf.PdfPageRenderer
 import com.lgsextractor.processing.cv.OpenCVProcessor
 import com.lgsextractor.processing.ocr.OcrEngine
 import com.lgsextractor.processing.detection.QuestionDetector
@@ -20,7 +19,6 @@ import javax.inject.Inject
 class ExtractQuestionsUseCase @Inject constructor(
     private val pdfRepository: PdfRepository,
     private val questionRepository: QuestionRepository,
-    private val pageRenderer: PdfPageRenderer,
     private val cvProcessor: OpenCVProcessor,
     private val ocrEngine: OcrEngine,
     private val questionDetector: QuestionDetector,
