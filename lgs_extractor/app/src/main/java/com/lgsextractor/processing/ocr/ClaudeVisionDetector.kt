@@ -63,13 +63,14 @@ class ClaudeVisionDetector @Inject constructor(
         apiKey: String,
         config: DetectionConfig,
         columnIndex: Int = 0,
-        regionRect: Rect = Rect(0, 0, pageBitmap.width, pageBitmap.height)
+        regionRect: Rect = Rect(0, 0, pageBitmap.width, pageBitmap.height),
+        mlKitLines: List<OcrLine> = emptyList()
     ): List<OcrResult> {
         val base64Image = bitmapToBase64(pageBitmap)
         val prompt = buildPrompt()
         val requestBody = buildRequestBody(base64Image, prompt, config)
 
-        logToFile("Starting Claude API call for column: $columnIndex, model: ${config.claudeModel}")
+        logToFile("Starting Claude API call for column: $columnIndex, model: ${config.claudeModel}, mlKitLines: ${mlKitLines.size}")
 
         val request = Request.Builder()
             .url(API_URL)
@@ -92,7 +93,7 @@ class ClaudeVisionDetector @Inject constructor(
                 logToFile("API SUCCESS: Received response length = ${bodyStr.length} chars")
                 logToFile("RAW JSON DUMP START:\n$bodyStr\nRAW JSON DUMP END")
 
-                val results = parseApiResponse(bodyStr, columnIndex, regionRect)
+                val results = parseApiResponse(bodyStr, columnIndex, regionRect, mlKitLines)
                 logToFile("Parsed ${results.firstOrNull()?.textLines?.size ?: 0} OCR lines from response")
                 results
             } catch (e: Exception) {
@@ -156,7 +157,33 @@ class ClaudeVisionDetector @Inject constructor(
         }.toString()
     }
 
-    private fun parseApiResponse(bodyStr: String, columnIndex: Int, regionRect: Rect): List<OcrResult> {
+    private fun findMatchingRect(text: String, mlKitLines: List<OcrLine>, defaultRect: Rect): Rect {
+        if (text.isBlank() || mlKitLines.isEmpty()) return defaultRect
+        
+        val normTarget = text.lowercase(Locale.getDefault()).replace(Regex("[^\\p{L}\\p{Nd}]"), "")
+        if (normTarget.length < 3) return defaultRect
+
+        val targetPrefix = normTarget.take(15)
+        
+        val match = mlKitLines.maxByOrNull { line ->
+            val normLine = line.text.lowercase(Locale.getDefault()).replace(Regex("[^\\p{L}\\p{Nd}]"), "")
+            when {
+                normLine.contains(targetPrefix) -> 100
+                normTarget.contains(normLine.take(15)) && normLine.length >= 10 -> 90
+                else -> normLine.commonPrefixWith(normTarget).length
+            }
+        }
+        
+        if (match != null) {
+            val normLine = match.text.lowercase(Locale.getDefault()).replace(Regex("[^\\p{L}\\p{Nd}]"), "")
+            if (normLine.contains(targetPrefix) || normTarget.contains(normLine.take(15)) || normLine.commonPrefixWith(normTarget).length >= 5) {
+                return match.boundingBox
+            }
+        }
+        return defaultRect
+    }
+
+    private fun parseApiResponse(bodyStr: String, columnIndex: Int, regionRect: Rect, mlKitLines: List<OcrLine>): List<OcrResult> {
         return try {
             val root = JSONObject(bodyStr)
             val contentArray = root.getJSONArray("content")
@@ -199,9 +226,10 @@ class ClaudeVisionDetector @Inject constructor(
                 val questionHeader = "$number. $text"
                 fullTextParts.add(questionHeader)
 
+                val matchedQuestionRect = findMatchingRect(text, mlKitLines, Rect(regionRect.left, currentY, regionRect.right, currentY + lineH - 1))
                 lines.add(OcrLine(
                     text = questionHeader,
-                    boundingBox = Rect(regionRect.left, currentY, regionRect.right, currentY + lineH - 1),
+                    boundingBox = matchedQuestionRect,
                     confidence = confidence,
                     lineIndex = lineIndex++
                 ))
@@ -212,9 +240,11 @@ class ClaudeVisionDetector @Inject constructor(
                         val optText = optionsObj.optString(optKey, "")
                         val optLine = "$optKey) $optText"
                         fullTextParts.add(optLine)
+                        
+                        val matchedOptRect = findMatchingRect(optText, mlKitLines, Rect(regionRect.left, currentY, regionRect.right, currentY + lineH - 1))
                         lines.add(OcrLine(
                             text = optLine,
-                            boundingBox = Rect(regionRect.left, currentY, regionRect.right, currentY + lineH - 1),
+                            boundingBox = matchedOptRect,
                             confidence = confidence,
                             lineIndex = lineIndex++
                         ))

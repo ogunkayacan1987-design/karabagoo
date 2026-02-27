@@ -65,12 +65,17 @@ class OcrEngine @Inject constructor(
             val result = when {
                 config.useClaudeVision || config.ocrEngine == OcrEngineType.CLAUDE_VISION -> {
                     if (claudeKey != null) {
+                        // Obtain baseline bounding boxes from ML Kit first
+                        val mlKitResult = mlKitOcr.recognizeText(processedBitmap, colIdx, regionRect)
+                        val mlKitLines = mlKitResult?.textLines ?: emptyList()
+
                         val claudeResults = claudeVisionDetector.detectQuestions(
                             pageBitmap = processedBitmap,
                             apiKey = claudeKey,
                             config = config,
                             columnIndex = colIdx,
-                            regionRect = regionRect
+                            regionRect = regionRect,
+                            mlKitLines = mlKitLines
                         )
                         if (claudeResults.isNotEmpty()) claudeResults.first() else null
                     } else null
