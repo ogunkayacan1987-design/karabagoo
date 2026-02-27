@@ -3,7 +3,6 @@ package com.lgsextractor
 import android.app.Application
 import androidx.work.Configuration
 import dagger.hilt.android.HiltAndroidApp
-import org.opencv.android.OpenCVLoader
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -15,7 +14,9 @@ class LGSApplication : Application(), Configuration.Provider {
     override fun onCreate() {
         setupCrashLogger()
         super.onCreate()
-        initOpenCV()
+        // OpenCV initialized lazily inside OpenCVProcessor on first use.
+        // Calling OpenCVLoader.initLocal() here risks a native SIGSEGV crash
+        // that bypasses the Java exception handler and kills the process.
     }
 
     private fun setupCrashLogger() {
@@ -36,21 +37,8 @@ class LGSApplication : Application(), Configuration.Provider {
         }
     }
 
-    private fun initOpenCV() {
-        try {
-            if (!OpenCVLoader.initLocal()) {
-                android.util.Log.e("LGSApp", "OpenCV initialization failed")
-            } else {
-                android.util.Log.i("LGSApp", "OpenCV initialized: ${OpenCVLoader.OPENCV_VERSION}")
-            }
-        } catch (e: Throwable) {
-            android.util.Log.e("LGSApp", "OpenCV init error", e)
-        }
-    }
-
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setMinimumLoggingLevel(android.util.Log.INFO)
             .build()
 }
-

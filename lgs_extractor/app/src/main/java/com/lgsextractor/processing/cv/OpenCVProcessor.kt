@@ -13,6 +13,7 @@ import org.opencv.core.Point
 import org.opencv.core.Scalar
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
+import org.opencv.android.OpenCVLoader
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
@@ -33,6 +34,20 @@ import kotlin.math.min
  */
 @Singleton
 class OpenCVProcessor @Inject constructor() {
+
+    @Volatile private var openCvReady = false
+
+    private fun tryInitOpenCV(): Boolean {
+        if (openCvReady) return true
+        return try {
+            openCvReady = OpenCVLoader.initLocal()
+            if (!openCvReady) android.util.Log.w("OpenCVProcessor", "OpenCVLoader.initLocal() returned false")
+            openCvReady
+        } catch (e: Throwable) {
+            android.util.Log.e("OpenCVProcessor", "OpenCV native library failed to load", e)
+            false
+        }
+    }
 
     data class LayoutInfo(
         val pageWidth: Int,
@@ -72,6 +87,8 @@ class OpenCVProcessor @Inject constructor() {
      * Main entry point: analyze the full page layout.
      */
     fun analyzeLayout(page: PdfPage): LayoutInfo {
+        if (!tryInitOpenCV()) return emptyLayout(page)
+
         val bitmap = BitmapFactory.decodeFile(page.bitmapPath)
             ?: return emptyLayout(page)
 
@@ -145,7 +162,7 @@ class OpenCVProcessor @Inject constructor() {
                 headerHeight = headerH,
                 footerStart = footerStart
             )
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             android.util.Log.e("OpenCVProcessor", "Layout analysis failed", e)
             bitmap.recycle()
             emptyLayout(page)
@@ -182,6 +199,7 @@ class OpenCVProcessor @Inject constructor() {
      * (Note: fastNlMeansDenoising avoided for Maven Central OpenCV compatibility)
      */
     fun preprocessForOcr(bitmap: Bitmap): Bitmap {
+        if (!openCvReady) return bitmap
         return try {
             val mat = Mat()
             Utils.bitmapToMat(bitmap, mat)
@@ -205,7 +223,7 @@ class OpenCVProcessor @Inject constructor() {
             mat.release(); gray.release(); blurred.release()
             enhanced.release(); resultMat.release()
             result
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             android.util.Log.w("OpenCVProcessor", "Preprocessing failed, using original", e)
             bitmap
         }
