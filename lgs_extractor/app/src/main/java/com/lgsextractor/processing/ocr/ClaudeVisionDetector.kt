@@ -180,36 +180,45 @@ class ClaudeVisionDetector @Inject constructor(
             val fullTextParts = mutableListOf<String>()
             var lineIndex = 0
 
-            for (i in 0 until questionsArray.length()) {
+            val qCount = questionsArray.length()
+            val sliceHeight = if (qCount > 0) regionRect.height() / qCount else 0
+
+            for (i in 0 until qCount) {
                 val q = questionsArray.getJSONObject(i)
                 val number = q.optInt("number", i + 1)
                 val text = q.optString("text", "")
                 val confidence = q.optDouble("confidence", 0.85).toFloat()
+
+                val optionsObj = q.optJSONObject("options")
+                val optKeys = listOf("A", "B", "C", "D").filter { optionsObj?.optString(it, "")?.isNotBlank() == true }
+                
+                val linesForThisQ = 1 + optKeys.size
+                val lineH = if (linesForThisQ > 0) sliceHeight / linesForThisQ else sliceHeight
+                var currentY = regionRect.top + (i * sliceHeight)
 
                 val questionHeader = "$number. $text"
                 fullTextParts.add(questionHeader)
 
                 lines.add(OcrLine(
                     text = questionHeader,
-                    boundingBox = regionRect,
+                    boundingBox = Rect(regionRect.left, currentY, regionRect.right, currentY + lineH - 1),
                     confidence = confidence,
                     lineIndex = lineIndex++
                 ))
+                currentY += lineH
 
-                val options = q.optJSONObject("options")
-                if (options != null) {
-                    for (optKey in listOf("A", "B", "C", "D")) {
-                        val optText = options.optString(optKey, "")
-                        if (optText.isNotBlank()) {
-                            val optLine = "$optKey) $optText"
-                            fullTextParts.add(optLine)
-                            lines.add(OcrLine(
-                                text = optLine,
-                                boundingBox = regionRect,
-                                confidence = confidence,
-                                lineIndex = lineIndex++
-                            ))
-                        }
+                if (optionsObj != null) {
+                    for (optKey in optKeys) {
+                        val optText = optionsObj.optString(optKey, "")
+                        val optLine = "$optKey) $optText"
+                        fullTextParts.add(optLine)
+                        lines.add(OcrLine(
+                            text = optLine,
+                            boundingBox = Rect(regionRect.left, currentY, regionRect.right, currentY + lineH - 1),
+                            confidence = confidence,
+                            lineIndex = lineIndex++
+                        ))
+                        currentY += lineH
                     }
                 }
             }
