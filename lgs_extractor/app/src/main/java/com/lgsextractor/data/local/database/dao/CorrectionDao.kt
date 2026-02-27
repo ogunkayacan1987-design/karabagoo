@@ -12,9 +12,9 @@ interface CorrectionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCorrection(correction: CorrectionEntity)
 
-    @Query("SELECT * FROM corrections WHERE documentId = :documentId ORDER BY timestamp DESC")
+    @Query("SELECT * FROM user_corrections WHERE documentId = :documentId ORDER BY timestamp DESC")
     suspend fun getCorrectionsForDocument(documentId: String): List<CorrectionEntity>
 
-    @Query("SELECT COUNT(*) FROM corrections WHERE documentId = :documentId")
+    @Query("SELECT COUNT(*) FROM user_corrections WHERE documentId = :documentId")
     suspend fun getCorrectionCount(documentId: String): Int
 }
