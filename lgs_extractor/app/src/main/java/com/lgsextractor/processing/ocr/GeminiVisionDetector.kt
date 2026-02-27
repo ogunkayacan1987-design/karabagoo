@@ -86,8 +86,9 @@ class GeminiVisionDetector @Inject constructor(
                 val bodyStr = response.body?.string() ?: ""
 
                 if (!response.isSuccessful) {
-                    logToFile("API ERROR ${response.code}: $bodyStr")
-                    return@withContext emptyList()
+                    val errMsg = "API ERROR ${response.code}: $bodyStr"
+                    logToFile(errMsg)
+                    throw Exception("Gemini API Hatası (${response.code}): Lütfen model adını veya API anahtarını kontrol edin. Detay: ${bodyStr.take(100)}")
                 }
 
                 logToFile("API SUCCESS: Received response length = ${bodyStr.length} chars")
@@ -98,7 +99,7 @@ class GeminiVisionDetector @Inject constructor(
                 results
             } catch (e: Exception) {
                 logToFile("EXCEPTION during API call or parsing: ${e.message}\n${e.stackTraceToString()}")
-                emptyList()
+                throw e
             }
         }
     }

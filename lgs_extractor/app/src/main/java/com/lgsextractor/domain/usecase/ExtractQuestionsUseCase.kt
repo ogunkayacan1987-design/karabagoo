@@ -46,86 +46,97 @@ class ExtractQuestionsUseCase @Inject constructor(
 
         emit(ProcessingProgress(0, pages.count(), com.lgsextractor.domain.model.ProcessingPhase.RENDERING_PDF))
 
-        for ((index, pageNum) in pages.withIndex()) {
-            // 1. Render page to bitmap
-            emit(ProcessingProgress(
-                currentPage = index,
-                totalPages = pages.count(),
-                phase = com.lgsextractor.domain.model.ProcessingPhase.RENDERING_PDF,
-                questionsFound = allQuestions.size,
-                message = "Sayfa ${pageNum + 1} render ediliyor..."
-            ))
+        try {
+            for ((index, pageNum) in pages.withIndex()) {
+                // 1. Render page to bitmap
+                emit(ProcessingProgress(
+                    currentPage = index,
+                    totalPages = pages.count(),
+                    phase = com.lgsextractor.domain.model.ProcessingPhase.RENDERING_PDF,
+                    questionsFound = allQuestions.size,
+                    message = "Sayfa ${pageNum + 1} render ediliyor..."
+                ))
 
-            val pageResult = pdfRepository.renderPage(document.id, pageNum, config.renderDpi)
-            if (pageResult.isFailure) {
-                android.util.Log.e("ExtractUseCase", "Page $pageNum render failed", pageResult.exceptionOrNull())
-                continue
+                val pageResult = pdfRepository.renderPage(document.id, pageNum, config.renderDpi)
+                if (pageResult.isFailure) {
+                    android.util.Log.e("ExtractUseCase", "Page $pageNum render failed", pageResult.exceptionOrNull())
+                    continue
+                }
+                val page = pageResult.getOrThrow()
+
+                // 2. OpenCV layout analysis
+                emit(ProcessingProgress(
+                    currentPage = index,
+                    totalPages = pages.count(),
+                    phase = com.lgsextractor.domain.model.ProcessingPhase.ANALYZING_LAYOUT,
+                    questionsFound = allQuestions.size,
+                    message = "Sayfa ${pageNum + 1} layout analizi..."
+                ))
+
+                val layoutInfo = cvProcessor.analyzeLayout(page)
+
+                // 3. OCR per column
+                emit(ProcessingProgress(
+                    currentPage = index,
+                    totalPages = pages.count(),
+                    phase = com.lgsextractor.domain.model.ProcessingPhase.RUNNING_OCR,
+                    questionsFound = allQuestions.size,
+                    message = "Sayfa ${pageNum + 1} OCR işleniyor..."
+                ))
+
+                val ocrResult = ocrEngine.recognizeText(page, layoutInfo, config, claudeApiKey, geminiApiKey)
+
+                // 4. Detect questions
+                emit(ProcessingProgress(
+                    currentPage = index,
+                    totalPages = pages.count(),
+                    phase = com.lgsextractor.domain.model.ProcessingPhase.DETECTING_QUESTIONS,
+                    questionsFound = allQuestions.size,
+                    message = "Sorular tespit ediliyor..."
+                ))
+
+                val pageQuestions = questionDetector.detectQuestions(
+                    page = page,
+                    ocrResult = ocrResult,
+                    layoutInfo = layoutInfo,
+                    documentId = document.id,
+                    config = config
+                )
+
+                // 5. Crop & export each question
+                emit(ProcessingProgress(
+                    currentPage = index,
+                    totalPages = pages.count(),
+                    phase = com.lgsextractor.domain.model.ProcessingPhase.CROPPING,
+                    questionsFound = allQuestions.size + pageQuestions.size,
+                    message = "${pageQuestions.size} soru kırpılıyor..."
+                ))
+
+                val croppedQuestions = pageQuestions.map { question ->
+                    cropEngine.cropQuestion(question, page)
+                }
+
+                // 6. Save to DB
+                questionRepository.saveQuestions(croppedQuestions)
+                allQuestions.addAll(croppedQuestions)
             }
-            val page = pageResult.getOrThrow()
 
-            // 2. OpenCV layout analysis
             emit(ProcessingProgress(
-                currentPage = index,
+                currentPage = pages.count(),
                 totalPages = pages.count(),
-                phase = com.lgsextractor.domain.model.ProcessingPhase.ANALYZING_LAYOUT,
+                phase = com.lgsextractor.domain.model.ProcessingPhase.COMPLETE,
                 questionsFound = allQuestions.size,
-                message = "Sayfa ${pageNum + 1} layout analizi..."
+                message = "Tamamlandı: ${allQuestions.size} soru bulundu."
             ))
-
-            val layoutInfo = cvProcessor.analyzeLayout(page)
-
-            // 3. OCR per column
+        } catch (e: Exception) {
+            android.util.Log.e("ExtractUseCase", "Extraction Error", e)
             emit(ProcessingProgress(
-                currentPage = index,
+                currentPage = 0,
                 totalPages = pages.count(),
-                phase = com.lgsextractor.domain.model.ProcessingPhase.RUNNING_OCR,
+                phase = com.lgsextractor.domain.model.ProcessingPhase.ERROR,
                 questionsFound = allQuestions.size,
-                message = "Sayfa ${pageNum + 1} OCR işleniyor..."
+                message = e.message ?: "İşlem sırasında beklenmeyen bir hata oluştu."
             ))
-
-            val ocrResult = ocrEngine.recognizeText(page, layoutInfo, config, claudeApiKey, geminiApiKey)
-
-            // 4. Detect questions
-            emit(ProcessingProgress(
-                currentPage = index,
-                totalPages = pages.count(),
-                phase = com.lgsextractor.domain.model.ProcessingPhase.DETECTING_QUESTIONS,
-                questionsFound = allQuestions.size,
-                message = "Sorular tespit ediliyor..."
-            ))
-
-            val pageQuestions = questionDetector.detectQuestions(
-                page = page,
-                ocrResult = ocrResult,
-                layoutInfo = layoutInfo,
-                documentId = document.id,
-                config = config
-            )
-
-            // 5. Crop & export each question
-            emit(ProcessingProgress(
-                currentPage = index,
-                totalPages = pages.count(),
-                phase = com.lgsextractor.domain.model.ProcessingPhase.CROPPING,
-                questionsFound = allQuestions.size + pageQuestions.size,
-                message = "${pageQuestions.size} soru kırpılıyor..."
-            ))
-
-            val croppedQuestions = pageQuestions.map { question ->
-                cropEngine.cropQuestion(question, page)
-            }
-
-            // 6. Save to DB
-            questionRepository.saveQuestions(croppedQuestions)
-            allQuestions.addAll(croppedQuestions)
         }
-
-        emit(ProcessingProgress(
-            currentPage = pages.count(),
-            totalPages = pages.count(),
-            phase = com.lgsextractor.domain.model.ProcessingPhase.COMPLETE,
-            questionsFound = allQuestions.size,
-            message = "Tamamlandı: ${allQuestions.size} soru bulundu."
-        ))
     }
 }
