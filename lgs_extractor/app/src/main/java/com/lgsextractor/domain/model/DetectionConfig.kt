@@ -42,7 +42,7 @@ data class DetectionConfig(
     
     // Gemini Vision AI
     val useGeminiVision: Boolean = false,
-    val geminiModel: String = "gemini-1.5-flash-latest"
+    val geminiModel: String = "gemini-1.5-flash"
 )
 
 enum class OcrEngineType {
