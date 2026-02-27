@@ -70,6 +70,24 @@ class PdfViewerViewModel @Inject constructor(
 
     init {
         loadDocument()
+        
+        viewModelScope.launch {
+            apiKeyManager.useGeminiVision.collect { enabled ->
+                _config.value = _config.value.copy(useGeminiVision = enabled)
+            }
+        }
+        viewModelScope.launch {
+            apiKeyManager.useClaudeVision.collect { enabled ->
+                _config.value = _config.value.copy(useClaudeVision = enabled)
+            }
+        }
+        viewModelScope.launch {
+            apiKeyManager.geminiModel.collect { savedModel ->
+                if (savedModel != null) {
+                    _config.value = _config.value.copy(geminiModel = savedModel)
+                }
+            }
+        }
     }
 
     private fun loadDocument() {
@@ -137,10 +155,12 @@ class PdfViewerViewModel @Inject constructor(
 
     fun setClaudeVisionEnabled(enabled: Boolean) {
         _config.value = _config.value.copy(useClaudeVision = enabled)
+        viewModelScope.launch { apiKeyManager.setUseClaudeVision(enabled) }
     }
 
     fun setGeminiVisionEnabled(enabled: Boolean) {
         _config.value = _config.value.copy(useGeminiVision = enabled)
+        viewModelScope.launch { apiKeyManager.setUseGeminiVision(enabled) }
     }
 
     fun setGeminiModel(model: String) {

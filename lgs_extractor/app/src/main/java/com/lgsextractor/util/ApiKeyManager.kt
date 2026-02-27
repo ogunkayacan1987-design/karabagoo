@@ -1,6 +1,7 @@
 package com.lgsextractor.util
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -21,6 +22,8 @@ class ApiKeyManager @Inject constructor(
         private val KEY_CLAUDE_API_KEY = stringPreferencesKey("claude_api_key")
         private val KEY_GEMINI_API_KEY = stringPreferencesKey("gemini_api_key")
         private val KEY_GEMINI_MODEL = stringPreferencesKey("gemini_model")
+        private val KEY_USE_CLAUDE = booleanPreferencesKey("use_claude_vision")
+        private val KEY_USE_GEMINI = booleanPreferencesKey("use_gemini_vision")
     }
 
     val claudeApiKey: Flow<String?> = context.apiKeyDataStore.data.map { prefs ->
@@ -33,6 +36,14 @@ class ApiKeyManager @Inject constructor(
     
     val geminiModel: Flow<String?> = context.apiKeyDataStore.data.map { prefs ->
         prefs[KEY_GEMINI_MODEL]?.takeIf { it.isNotBlank() }
+    }
+
+    val useClaudeVision: Flow<Boolean> = context.apiKeyDataStore.data.map { prefs ->
+        prefs[KEY_USE_CLAUDE] ?: false
+    }
+
+    val useGeminiVision: Flow<Boolean> = context.apiKeyDataStore.data.map { prefs ->
+        prefs[KEY_USE_GEMINI] ?: false
     }
 
     suspend fun getClaudeApiKey(): String? =
@@ -58,6 +69,21 @@ class ApiKeyManager @Inject constructor(
     
     suspend fun saveGeminiModel(model: String) {
         context.apiKeyDataStore.edit { prefs ->
+            prefs[KEY_GEMINI_MODEL] = model.trim()
+        }
+    }
+
+    suspend fun setUseClaudeVision(enabled: Boolean) {
+        context.apiKeyDataStore.edit { prefs ->
+            prefs[KEY_USE_CLAUDE] = enabled
+        }
+    }
+
+    suspend fun setUseGeminiVision(enabled: Boolean) {
+        context.apiKeyDataStore.edit { prefs ->
+            prefs[KEY_USE_GEMINI] = enabled
+        }
+    }
             prefs[KEY_GEMINI_MODEL] = model.trim()
         }
     }
