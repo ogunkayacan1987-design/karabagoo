@@ -88,6 +88,8 @@ class OpenCVProcessor @Inject constructor() {
             val pageH = bitmap.height
 
             // Filter to plausible text block contours
+            // Imgproc.boundingRect returns org.opencv.core.Rect (x,y,width,height);
+            // convert to android.graphics.Rect (left,top,right,bottom) for the rest of the pipeline.
             val textBlocks = contours
                 .map { Imgproc.boundingRect(it) }
                 .filter { r ->
@@ -96,7 +98,8 @@ class OpenCVProcessor @Inject constructor() {
                     r.width < pageW * 0.98 &&    // not full page width (page border)
                     r.height < pageH * 0.30      // not suspiciously tall
                 }
-                .sortedBy { it.y }
+                .map { r -> android.graphics.Rect(r.x, r.y, r.x + r.width, r.y + r.height) }
+                .sortedBy { it.top }
 
             // Detect columns
             val columnBoundaries = detectColumns(textBlocks, pageW, pageH)

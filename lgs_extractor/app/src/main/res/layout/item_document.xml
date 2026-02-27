@@ -35,7 +35,7 @@
                 android:text="Dosya Adı"
                 android:textSize="16sp"
                 android:textColor="@color/textPrimary"
-                android:isFakeBoldText="true"
+                android:textStyle="bold"
                 android:maxLines="1"
                 android:ellipsize="end" />
 

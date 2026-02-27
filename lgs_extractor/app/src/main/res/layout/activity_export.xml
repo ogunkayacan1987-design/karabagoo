@@ -45,7 +45,7 @@
                         android:layout_height="wrap_content"
                         android:text="Dışa Aktarma Ayarları"
                         android:textSize="16sp"
-                        android:isFakeBoldText="true"
+                        android:textStyle="bold"
                         android:layout_marginBottom="12dp" />
 
                     <TextView
