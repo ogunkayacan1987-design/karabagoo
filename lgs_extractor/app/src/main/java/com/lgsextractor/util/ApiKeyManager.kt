@@ -84,9 +84,6 @@ class ApiKeyManager @Inject constructor(
             prefs[KEY_USE_GEMINI] = enabled
         }
     }
-            prefs[KEY_GEMINI_MODEL] = model.trim()
-        }
-    }
 
     suspend fun clearClaudeApiKey() {
         context.apiKeyDataStore.edit { prefs ->
