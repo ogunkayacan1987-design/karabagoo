@@ -64,7 +64,8 @@ class GeminiVisionDetector @Inject constructor(
         config: DetectionConfig,
         columnIndex: Int = 0,
         regionRect: Rect = Rect(0, 0, pageBitmap.width, pageBitmap.height),
-        mlKitLines: List<OcrLine> = emptyList()
+        mlKitLines: List<OcrLine> = emptyList(),
+        expectedColumns: Int = 1
     ): List<OcrResult> {
         val base64Image = bitmapToBase64(pageBitmap)
         val prompt = buildPrompt()

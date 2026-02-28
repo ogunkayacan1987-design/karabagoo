@@ -116,9 +116,13 @@ class QuestionBoundaryInferencer @Inject constructor(
             val paddedTop = max(0, refinedTop - config.questionPaddingPx)
             val paddedBottom = min(layoutInfo.pageHeight, refinedBottom + config.questionPaddingPx)
 
-            // Step 4: X extent from column boundaries
-            val leftX = max(0, colBoundary.startX - config.questionPaddingPx)
-            val rightX = min(layoutInfo.pageWidth, colBoundary.endX + config.questionPaddingPx)
+            // Step 4: X extent
+            // Prefer ocrResult.regionRect when it is narrower than the full page — this means
+            // Claude/Gemini Vision already split the page into column-specific regions.
+            // Fall back to colBoundary for ML Kit / Tesseract (per-column processing).
+            val useRegionX = ocrResult.regionRect.width() < layoutInfo.pageWidth * 0.85
+            val leftX  = max(0, (if (useRegionX) ocrResult.regionRect.left  else colBoundary.startX) - config.questionPaddingPx)
+            val rightX = min(layoutInfo.pageWidth, (if (useRegionX) ocrResult.regionRect.right else colBoundary.endX) + config.questionPaddingPx)
 
             // Step 5: Confidence score
             val confidence = computeConfidence(qLines, optionBlock, qStart.patternName)

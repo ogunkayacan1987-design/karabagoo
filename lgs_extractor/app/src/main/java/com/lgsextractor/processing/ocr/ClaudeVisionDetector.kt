@@ -59,12 +59,15 @@ class ClaudeVisionDetector @Inject constructor(
 
     /**
      * Sends a page bitmap to Claude Vision and returns detected questions as OcrResult list.
-     * @param pageBitmap   The rendered PDF page bitmap
-     * @param apiKey       Claude API key
-     * @param config       DetectionConfig with model/token settings
-     * @param columnIndex  Column index for the OcrResult
-     * @param regionRect   Region rect for the OcrResult
-     * @param mlKitLines   ML Kit OCR lines used to anchor Claude results to real pixel positions
+     * @param pageBitmap      The rendered PDF page bitmap
+     * @param apiKey          Claude API key
+     * @param config          DetectionConfig with model/token settings
+     * @param columnIndex     Column index for the OcrResult
+     * @param regionRect      Region rect for the OcrResult
+     * @param mlKitLines      ML Kit OCR lines used to anchor Claude results to real pixel positions
+     * @param expectedColumns Number of columns OpenCV detected on this page (1 or 2).
+     *                        When ≥2, forces multi-column question grouping even if ML Kit
+     *                        cannot anchor right-column headers.
      * @return List of OcrResult on success, empty list on failure
      */
     suspend fun detectQuestions(
@@ -73,7 +76,8 @@ class ClaudeVisionDetector @Inject constructor(
         config: DetectionConfig,
         columnIndex: Int = 0,
         regionRect: Rect = Rect(0, 0, pageBitmap.width, pageBitmap.height),
-        mlKitLines: List<OcrLine> = emptyList()
+        mlKitLines: List<OcrLine> = emptyList(),
+        expectedColumns: Int = 1
     ): List<OcrResult> {
         // bitmapToBase64 is CPU-bound; keep it off Main thread
         val base64Image = withContext(Dispatchers.IO) { bitmapToBase64(pageBitmap) }
@@ -81,7 +85,7 @@ class ClaudeVisionDetector @Inject constructor(
         val prompt = buildPrompt()
         val requestBody = buildRequestBody(base64Image, prompt, config)
 
-        logToFile("Starting Claude API call: column=$columnIndex model=${config.claudeModel} mlKitLines=${mlKitLines.size}")
+        logToFile("Starting Claude API call: column=$columnIndex model=${config.claudeModel} mlKitLines=${mlKitLines.size} expectedColumns=$expectedColumns")
 
         val request = Request.Builder()
             .url(API_URL)
@@ -106,7 +110,7 @@ class ClaudeVisionDetector @Inject constructor(
                 logToFile("API SUCCESS: ${bodyStr.length} chars")
                 logToFile("RAW JSON:\n$bodyStr")
 
-                val results = parseApiResponse(bodyStr, columnIndex, regionRect, mlKitLines)
+                val results = parseApiResponse(bodyStr, columnIndex, regionRect, mlKitLines, expectedColumns)
                 logToFile("Parsed ${results.firstOrNull()?.textLines?.size ?: 0} OCR lines")
                 results
             } catch (e: Exception) {
@@ -220,7 +224,8 @@ class ClaudeVisionDetector @Inject constructor(
         bodyStr: String,
         columnIndex: Int,
         regionRect: Rect,
-        mlKitLines: List<OcrLine> = emptyList()
+        mlKitLines: List<OcrLine> = emptyList(),
+        expectedColumns: Int = 1
     ): List<OcrResult> {
         return try {
             val root = JSONObject(bodyStr)
@@ -291,9 +296,12 @@ class ClaudeVisionDetector @Inject constructor(
             }
 
             // --- Pass 3: Group by column, build OcrLines, return per-column OcrResults ---
-            // Determine if page is multi-column: any anchored header in right half → 2 columns
             val halfX = regionRect.left + regionRect.width() / 2
-            val isMultiColumn = headerPositions.any { it.anchored && it.left > halfX }
+            // Multi-column if:
+            //  a) OpenCV explicitly detected ≥2 columns (reliable), OR
+            //  b) ML Kit anchored a header in the right half of the page
+            val isMultiColumn = expectedColumns >= 2 ||
+                headerPositions.any { it.anchored && it.left > halfX }
 
             // Assign each question to a column
             val questionCols: List<Int> = headerPositions.mapIndexed { i, pos ->
@@ -381,7 +389,7 @@ class ClaudeVisionDetector @Inject constructor(
 
     private fun bitmapToBase64(bitmap: Bitmap): String {
         val outputStream = ByteArrayOutputStream()
-        val maxDim = 2000
+        val maxDim = 1600  // Reduced from 2000: smaller upload, faster API round-trip; 1600px is still readable
         val scaled = if (bitmap.width > maxDim || bitmap.height > maxDim) {
             val ratio = minOf(maxDim.toFloat() / bitmap.width, maxDim.toFloat() / bitmap.height)
             Bitmap.createScaledBitmap(

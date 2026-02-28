@@ -71,7 +71,8 @@ class OcrEngine @Inject constructor(
                 config = config,
                 columnIndex = 0,
                 regionRect = fullRegion,
-                mlKitLines = mlKitLines
+                mlKitLines = mlKitLines,
+                expectedColumns = layoutInfo.columnBoundaries.size
             )
             fullBitmap.recycle()
             return claudeResults
@@ -89,7 +90,8 @@ class OcrEngine @Inject constructor(
                 config = config,
                 columnIndex = 0,
                 regionRect = fullRegion,
-                mlKitLines = mlKitLines
+                mlKitLines = mlKitLines,
+                expectedColumns = layoutInfo.columnBoundaries.size
             )
             fullBitmap.recycle()
             return geminiResults
