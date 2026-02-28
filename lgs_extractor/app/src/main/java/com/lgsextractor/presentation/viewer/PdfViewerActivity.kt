@@ -280,9 +280,13 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
             val btnTestClaude = Button(this@PdfViewerActivity).apply {
                 text = "Claude Bağlantısını Test Et"
             }
+            val btnTestPage = Button(this@PdfViewerActivity).apply {
+                text = "Mevcut Sayfayı Claude ile Test Et"
+            }
             val tvTestResult = TextView(this@PdfViewerActivity).apply {
                 setPadding(0, 8, 0, 8)
-                textSize = 12f
+                textSize = 11f
+                setTextIsSelectable(true)
             }
 
             layout.addView(labelGeminiKey)
@@ -294,6 +298,7 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
             layout.addView(editClaudeKey)
             layout.addView(checkClaudeVision)
             layout.addView(btnTestClaude)
+            layout.addView(btnTestPage)
             layout.addView(tvTestResult)
 
             val scrollView = ScrollView(this@PdfViewerActivity).also { it.addView(layout) }
@@ -318,6 +323,20 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
                     val result = testClaudeApiKey(key)
                     tvTestResult.text = result
                     btnTestClaude.isEnabled = true
+                }
+            }
+
+            btnTestPage.setOnClickListener {
+                val key = editClaudeKey.text.toString().trim()
+                if (key.isBlank()) { tvTestResult.text = "❌ API anahtarı boş!"; return@setOnClickListener }
+                val page = viewModel.currentPage.value
+                if (page == null) { tvTestResult.text = "❌ Sayfa yüklü değil!"; return@setOnClickListener }
+                tvTestResult.text = "⏳ Sayfa Claude'a gönderiliyor (max 4096 token)..."
+                btnTestPage.isEnabled = false
+                lifecycleScope.launch {
+                    val result = testPageWithClaude(key, page.bitmapPath)
+                    tvTestResult.text = result
+                    btnTestPage.isEnabled = true
                 }
             }
 
@@ -362,6 +381,102 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
                 .show()
         }
     }
+
+    /**
+     * Sends the current page bitmap to Claude and shows raw JSON response.
+     * Use this to debug why 0 questions are found.
+     */
+    private suspend fun testPageWithClaude(apiKey: String, bitmapPath: String): String =
+        withContext(Dispatchers.IO) {
+            try {
+                val bitmap = android.graphics.BitmapFactory.decodeFile(bitmapPath)
+                    ?: return@withContext "❌ Bitmap yüklenemedi: $bitmapPath"
+
+                // Scale down for test
+                val maxDim = 1600
+                val scaled = if (bitmap.width > maxDim || bitmap.height > maxDim) {
+                    val ratio = minOf(maxDim.toFloat() / bitmap.width, maxDim.toFloat() / bitmap.height)
+                    android.graphics.Bitmap.createScaledBitmap(
+                        bitmap,
+                        (bitmap.width * ratio).toInt(),
+                        (bitmap.height * ratio).toInt(),
+                        true
+                    )
+                } else bitmap
+
+                val baos = java.io.ByteArrayOutputStream()
+                scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, baos)
+                if (scaled !== bitmap) scaled.recycle()
+                bitmap.recycle()
+                val base64 = android.util.Base64.encodeToString(baos.toByteArray(), android.util.Base64.NO_WRAP)
+
+                val body = JSONObject().apply {
+                    put("model", "claude-opus-4-6")
+                    put("max_tokens", 4096)
+                    put("messages", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("role", "user")
+                            put("content", JSONArray().apply {
+                                put(JSONObject().apply {
+                                    put("type", "image")
+                                    put("source", JSONObject().apply {
+                                        put("type", "base64")
+                                        put("media_type", "image/jpeg")
+                                        put("data", base64)
+                                    })
+                                })
+                                put(JSONObject().apply {
+                                    put("type", "text")
+                                    put("text", """Bu Türkçe LGS sınav sayfasındaki soruları JSON formatında döndür:
+{"questions":[{"number":1,"text":"...","options":{"A":"...","B":"...","C":"...","D":"..."}}]}
+Sadece JSON yaz.""")
+                                })
+                            })
+                        })
+                    })
+                }.toString()
+
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(90, TimeUnit.SECONDS)
+                    .build()
+
+                val req = Request.Builder()
+                    .url("https://api.anthropic.com/v1/messages")
+                    .addHeader("x-api-key", apiKey)
+                    .addHeader("anthropic-version", "2023-06-01")
+                    .addHeader("content-type", "application/json")
+                    .post(body.toRequestBody("application/json".toMediaType()))
+                    .build()
+
+                val response = client.newCall(req).execute()
+                val responseBody = response.body?.string() ?: "(boş yanıt)"
+
+                if (!response.isSuccessful) {
+                    return@withContext "❌ HTTP ${response.code}:\n$responseBody"
+                }
+
+                // Extract text from response
+                val text = runCatching {
+                    JSONObject(responseBody).getJSONArray("content")
+                        .getJSONObject(0).getString("text")
+                }.getOrDefault(responseBody)
+
+                // Count questions found in response
+                val qCount = runCatching {
+                    val j = text.substring(text.indexOf('{'), text.lastIndexOf('}') + 1)
+                    JSONObject(j).getJSONArray("questions").length()
+                }.getOrDefault(-1)
+
+                if (qCount >= 0) {
+                    "✅ Claude ${qCount} soru buldu!\n\nJSON önizleme (ilk 600 karakter):\n${text.take(600)}"
+                } else {
+                    "⚠️ JSON parse edilemedi.\n\nClaude yanıtı (ilk 800 karakter):\n${text.take(800)}"
+                }
+            } catch (e: Exception) {
+                "❌ Hata: ${e.javaClass.simpleName}: ${e.message}"
+            }
+        }
 
     /** Makes a minimal Claude API call and returns a human-readable result string. */
     private suspend fun testClaudeApiKey(apiKey: String): String = withContext(Dispatchers.IO) {

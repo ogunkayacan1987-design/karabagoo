@@ -38,7 +38,7 @@ data class DetectionConfig(
     // Claude Vision AI
     val useClaudeVision: Boolean = false,
     val claudeModel: String = "claude-opus-4-6",
-    val claudeMaxTokens: Int = 1024,
+    val claudeMaxTokens: Int = 4096,   // 1024 was too low — a single page can need 2000+ tokens
     
     // Gemini Vision AI
     val useGeminiVision: Boolean = false,
