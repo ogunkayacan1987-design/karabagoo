@@ -207,9 +207,11 @@ class ClaudeVisionDetector @Inject constructor(
     /**
      * Converts Claude's structured JSON response to OcrResult.
      *
-     * Each line is given a unique Y coordinate so QuestionBoundaryInferencer
-     * can correctly segment questions. When ML Kit lines are provided,
-     * real pixel positions are preferred over virtual ones.
+     * Two-pass approach for accurate bounding boxes:
+     * 1) Find each question header's real Y using ML Kit text matching
+     * 2) Extend each question's bounding box down to the next question's header Y
+     *
+     * Falls back to evenly-distributed virtual Y when ML Kit has no matches.
      */
     private fun parseApiResponse(
         bodyStr: String,
@@ -241,55 +243,81 @@ class ClaudeVisionDetector @Inject constructor(
 
             Log.d(TAG, "Claude returned ${questionsArray.length()} questions")
 
+            val qCount = questionsArray.length()
+            if (qCount == 0) return emptyList()
+
+            // --- Data class for first pass ---
+            data class QData(
+                val number: Int,
+                val text: String,
+                val confidence: Float,
+                val optKeys: List<String>,
+                val optionsObj: org.json.JSONObject?
+            )
+
+            val qDataList = (0 until qCount).map { i ->
+                val q = questionsArray.getJSONObject(i)
+                val optionsObj = q.optJSONObject("options")
+                QData(
+                    number = q.optInt("number", i + 1),
+                    text = q.optString("text", ""),
+                    confidence = q.optDouble("confidence", 0.85).toFloat(),
+                    optKeys = listOf("A", "B", "C", "D")
+                        .filter { optionsObj?.optString(it, "")?.isNotBlank() == true },
+                    optionsObj = optionsObj
+                )
+            }
+
+            // --- Pass 1: Resolve header Y positions ---
+            // Try to find each question's real Y from ML Kit; fall back to evenly-spaced virtual Y.
+            val sliceHeight = regionRect.height() / qCount
+            val headerYList: List<Int> = qDataList.mapIndexed { i, qData ->
+                val virtualY = regionRect.top + i * sliceHeight
+                val defaultRect = Rect(regionRect.left, virtualY, regionRect.right, virtualY + VIRTUAL_LINE_HEIGHT_PX)
+                // Look for the question number pattern in ML Kit ("4." or "4 .")
+                val numberMatch = findMatchingRect("${qData.number}.", mlKitLines, defaultRect)
+                if (numberMatch !== defaultRect) {
+                    numberMatch.top
+                } else {
+                    findMatchingRect(qData.text, mlKitLines, defaultRect).top
+                }
+            }
+
+            // --- Pass 2: Build OcrLines with accurate bounding boxes ---
             val lines = mutableListOf<OcrLine>()
             val fullTextParts = mutableListOf<String>()
 
-            val qCount = questionsArray.length()
-            // Distribute questions evenly across the page height for virtual Y positions
-            val sliceHeight = if (qCount > 0) regionRect.height() / qCount else regionRect.height()
+            for ((i, qData) in qDataList.withIndex()) {
+                val qTop = headerYList[i]
+                // Question bottom = next question's header Y - 1, or column bottom for last question
+                val qBottom = if (i + 1 < qCount) (headerYList[i + 1] - 1) else regionRect.bottom
 
-            for (i in 0 until qCount) {
-                val q = questionsArray.getJSONObject(i)
-                val number = q.optInt("number", i + 1)
-                val text = q.optString("text", "")
-                val confidence = q.optDouble("confidence", 0.85).toFloat()
+                val linesInQ = 1 + qData.optKeys.size
+                val lineH = if (linesInQ > 0) (qBottom - qTop) / linesInQ else VIRTUAL_LINE_HEIGHT_PX
 
-                val optionsObj = q.optJSONObject("options")
-                val optKeys = listOf("A", "B", "C", "D")
-                    .filter { optionsObj?.optString(it, "")?.isNotBlank() == true }
-
-                val linesForThisQ = 1 + optKeys.size
-                val lineH = if (linesForThisQ > 0) sliceHeight / linesForThisQ else VIRTUAL_LINE_HEIGHT_PX
-                var currentY = regionRect.top + (i * sliceHeight)
-
-                val questionHeader = "$number. $text"
+                val questionHeader = "${qData.number}. ${qData.text}"
                 fullTextParts.add(questionHeader)
 
-                val defaultHeaderRect = Rect(regionRect.left, currentY, regionRect.right, currentY + lineH - 1)
-                val headerRect = findMatchingRect(text, mlKitLines, defaultHeaderRect)
                 lines.add(OcrLine(
                     text = questionHeader,
-                    boundingBox = headerRect,
-                    confidence = confidence,
+                    boundingBox = Rect(regionRect.left, qTop, regionRect.right, qTop + lineH),
+                    confidence = qData.confidence,
                     lineIndex = lines.size
                 ))
-                currentY += lineH
 
-                if (optionsObj != null) {
-                    for (optKey in optKeys) {
-                        val optText = optionsObj.optString(optKey, "")
+                var optY = qTop + lineH
+                if (qData.optionsObj != null) {
+                    for (optKey in qData.optKeys) {
+                        val optText = qData.optionsObj.optString(optKey, "")
                         val optLine = "$optKey) $optText"
                         fullTextParts.add(optLine)
-
-                        val defaultOptRect = Rect(regionRect.left, currentY, regionRect.right, currentY + lineH - 1)
-                        val optRect = findMatchingRect(optText, mlKitLines, defaultOptRect)
                         lines.add(OcrLine(
                             text = optLine,
-                            boundingBox = optRect,
-                            confidence = confidence,
+                            boundingBox = Rect(regionRect.left, optY, regionRect.right, optY + lineH),
+                            confidence = qData.confidence,
                             lineIndex = lines.size
                         ))
-                        currentY += lineH
+                        optY += lineH
                     }
                 }
             }
