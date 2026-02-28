@@ -163,7 +163,9 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
                     }
                     is PdfViewerViewModel.ProcessingState.Error -> {
                         binding.processingPanel.visibility = View.GONE
-                        Snackbar.make(binding.root, "Hata: ${state.message}", Snackbar.LENGTH_LONG).show()
+                        Snackbar.make(binding.root, "Hata: ${state.message}", Snackbar.LENGTH_INDEFINITE)
+                            .setAction("Tamam") {}
+                            .show()
                     }
                 }
             }
@@ -286,18 +288,34 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
                 .setNegativeButton("İptal", null)
                 .setPositiveButton("Kaydet") { _, _ ->
                     val newClaudeKey = editClaudeKey.text.toString().trim()
-                    if (newClaudeKey.isNotBlank()) viewModel.saveClaudeApiKey(newClaudeKey)
+                    if (newClaudeKey.isNotBlank()) {
+                        if (!newClaudeKey.startsWith("sk-ant-")) {
+                            Snackbar.make(
+                                binding.root,
+                                "Uyarı: Claude API anahtarı 'sk-ant-' ile başlamalıdır",
+                                Snackbar.LENGTH_LONG
+                            ).show()
+                        }
+                        viewModel.saveClaudeApiKey(newClaudeKey)
+                    } else if (checkClaudeVision.isChecked) {
+                        Snackbar.make(
+                            binding.root,
+                            "Claude Vision için API anahtarı gereklidir",
+                            Snackbar.LENGTH_LONG
+                        ).show()
+                        return@setPositiveButton
+                    }
                     viewModel.setClaudeVisionEnabled(checkClaudeVision.isChecked)
-                    
+
                     val newGeminiKey = editGeminiKey.text.toString().trim()
                     if (newGeminiKey.isNotBlank()) viewModel.saveGeminiApiKey(newGeminiKey)
-                    
+
                     val newGeminiModel = editGeminiModel.text.toString().trim()
                     if (newGeminiModel.isNotBlank()) {
                         viewModel.saveGeminiModel(newGeminiModel)
                         viewModel.setGeminiModel(newGeminiModel)
                     }
-                    
+
                     viewModel.setGeminiVisionEnabled(checkGeminiVision.isChecked)
 
                     Snackbar.make(binding.root, "Ayarlar kaydedildi", Snackbar.LENGTH_SHORT).show()

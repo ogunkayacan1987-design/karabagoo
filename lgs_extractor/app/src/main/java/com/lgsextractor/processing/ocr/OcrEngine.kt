@@ -3,6 +3,7 @@ package com.lgsextractor.processing.ocr
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Rect
+import android.util.Log
 import com.lgsextractor.domain.model.DetectionConfig
 import com.lgsextractor.domain.model.OcrEngineType
 import com.lgsextractor.domain.model.PdfPage
@@ -38,6 +39,10 @@ class OcrEngine @Inject constructor(
     private val claudeVisionDetector: ClaudeVisionDetector,
     private val geminiVisionDetector: GeminiVisionDetector
 ) {
+    companion object {
+        private const val TAG = "OcrEngine"
+    }
+
     suspend fun recognizeText(
         page: PdfPage,
         layoutInfo: OpenCVProcessor.LayoutInfo,

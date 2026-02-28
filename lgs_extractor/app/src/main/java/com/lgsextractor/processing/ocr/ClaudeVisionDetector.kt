@@ -1,10 +1,14 @@
 package com.lgsextractor.processing.ocr
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.util.Base64
 import android.util.Log
 import com.lgsextractor.domain.model.DetectionConfig
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -12,16 +16,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.util.concurrent.TimeUnit
-import javax.inject.Inject
-import javax.inject.Singleton
-
-import android.content.Context
-import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.TimeUnit
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Uses Claude Vision API to detect and extract questions from a PDF page bitmap.
@@ -36,6 +37,7 @@ class ClaudeVisionDetector @Inject constructor(
         private const val TAG = "ClaudeVisionDetector"
         private const val API_URL = "https://api.anthropic.com/v1/messages"
         private const val ANTHROPIC_VERSION = "2023-06-01"
+        private const val VIRTUAL_LINE_HEIGHT_PX = 60
     }
 
     private val httpClient = OkHttpClient.Builder()
@@ -57,6 +59,13 @@ class ClaudeVisionDetector @Inject constructor(
 
     /**
      * Sends a page bitmap to Claude Vision and returns detected questions as OcrResult list.
+     * @param pageBitmap   The rendered PDF page bitmap
+     * @param apiKey       Claude API key
+     * @param config       DetectionConfig with model/token settings
+     * @param columnIndex  Column index for the OcrResult
+     * @param regionRect   Region rect for the OcrResult
+     * @param mlKitLines   ML Kit OCR lines used to anchor Claude results to real pixel positions
+     * @return List of OcrResult on success, empty list on failure
      */
     suspend fun detectQuestions(
         pageBitmap: Bitmap,
@@ -66,11 +75,13 @@ class ClaudeVisionDetector @Inject constructor(
         regionRect: Rect = Rect(0, 0, pageBitmap.width, pageBitmap.height),
         mlKitLines: List<OcrLine> = emptyList()
     ): List<OcrResult> {
-        val base64Image = bitmapToBase64(pageBitmap)
+        // bitmapToBase64 is CPU-bound; keep it off Main thread
+        val base64Image = withContext(Dispatchers.IO) { bitmapToBase64(pageBitmap) }
+
         val prompt = buildPrompt()
         val requestBody = buildRequestBody(base64Image, prompt, config)
 
-        logToFile("Starting Claude API call for column: $columnIndex, model: ${config.claudeModel}, mlKitLines: ${mlKitLines.size}")
+        logToFile("Starting Claude API call: column=$columnIndex model=${config.claudeModel} mlKitLines=${mlKitLines.size}")
 
         val request = Request.Builder()
             .url(API_URL)
@@ -80,7 +91,9 @@ class ClaudeVisionDetector @Inject constructor(
             .post(requestBody.toRequestBody("application/json".toMediaType()))
             .build()
 
-        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        // OkHttp execute() is blocking — MUST run on IO dispatcher to avoid
+        // NetworkOnMainThreadException when called from viewModelScope (Main).
+        return withContext(Dispatchers.IO) {
             try {
                 val response = httpClient.newCall(request).execute()
                 val bodyStr = response.body?.string() ?: ""
@@ -90,14 +103,14 @@ class ClaudeVisionDetector @Inject constructor(
                     return@withContext emptyList()
                 }
 
-                logToFile("API SUCCESS: Received response length = ${bodyStr.length} chars")
-                logToFile("RAW JSON DUMP START:\n$bodyStr\nRAW JSON DUMP END")
+                logToFile("API SUCCESS: ${bodyStr.length} chars")
+                logToFile("RAW JSON:\n$bodyStr")
 
                 val results = parseApiResponse(bodyStr, columnIndex, regionRect, mlKitLines)
-                logToFile("Parsed ${results.firstOrNull()?.textLines?.size ?: 0} OCR lines from response")
+                logToFile("Parsed ${results.firstOrNull()?.textLines?.size ?: 0} OCR lines")
                 results
             } catch (e: Exception) {
-                logToFile("EXCEPTION during API call or parsing: ${e.message}\n${e.stackTraceToString()}")
+                logToFile("EXCEPTION: ${e.javaClass.simpleName}: ${e.message}\n${e.stackTraceToString()}")
                 emptyList()
             }
         }
@@ -157,14 +170,19 @@ class ClaudeVisionDetector @Inject constructor(
         }.toString()
     }
 
+    /**
+     * Tries to find a matching ML Kit line by text similarity so that
+     * Claude results can be anchored to real pixel coordinates.
+     * Falls back to [defaultRect] if no suitable match is found.
+     */
     private fun findMatchingRect(text: String, mlKitLines: List<OcrLine>, defaultRect: Rect): Rect {
         if (text.isBlank() || mlKitLines.isEmpty()) return defaultRect
-        
+
         val normTarget = text.lowercase(Locale.getDefault()).replace(Regex("[^\\p{L}\\p{Nd}]"), "")
         if (normTarget.length < 3) return defaultRect
 
         val targetPrefix = normTarget.take(15)
-        
+
         val match = mlKitLines.maxByOrNull { line ->
             val normLine = line.text.lowercase(Locale.getDefault()).replace(Regex("[^\\p{L}\\p{Nd}]"), "")
             when {
@@ -173,17 +191,32 @@ class ClaudeVisionDetector @Inject constructor(
                 else -> normLine.commonPrefixWith(normTarget).length
             }
         }
-        
+
         if (match != null) {
             val normLine = match.text.lowercase(Locale.getDefault()).replace(Regex("[^\\p{L}\\p{Nd}]"), "")
-            if (normLine.contains(targetPrefix) || normTarget.contains(normLine.take(15)) || normLine.commonPrefixWith(normTarget).length >= 5) {
-                return match.boundingBox
+            val score = when {
+                normLine.contains(targetPrefix) -> 100
+                normTarget.contains(normLine.take(15)) && normLine.length >= 10 -> 90
+                else -> normLine.commonPrefixWith(normTarget).length
             }
+            if (score >= 5) return match.boundingBox
         }
         return defaultRect
     }
 
-    private fun parseApiResponse(bodyStr: String, columnIndex: Int, regionRect: Rect, mlKitLines: List<OcrLine>): List<OcrResult> {
+    /**
+     * Converts Claude's structured JSON response to OcrResult.
+     *
+     * Each line is given a unique Y coordinate so QuestionBoundaryInferencer
+     * can correctly segment questions. When ML Kit lines are provided,
+     * real pixel positions are preferred over virtual ones.
+     */
+    private fun parseApiResponse(
+        bodyStr: String,
+        columnIndex: Int,
+        regionRect: Rect,
+        mlKitLines: List<OcrLine> = emptyList()
+    ): List<OcrResult> {
         return try {
             val root = JSONObject(bodyStr)
             val contentArray = root.getJSONArray("content")
@@ -194,21 +227,26 @@ class ClaudeVisionDetector @Inject constructor(
                 }
                 .firstOrNull() ?: return emptyList()
 
-            // Extract JSON from the response text
+            // Extract JSON block (Claude may prepend/append prose)
             val jsonStart = textContent.indexOf('{')
             val jsonEnd = textContent.lastIndexOf('}')
-            if (jsonStart < 0 || jsonEnd < 0) return emptyList()
+            if (jsonStart < 0 || jsonEnd < 0) {
+                Log.w(TAG, "No JSON object in Claude response: $textContent")
+                return emptyList()
+            }
 
             val jsonStr = textContent.substring(jsonStart, jsonEnd + 1)
             val parsed = JSONObject(jsonStr)
             val questionsArray = parsed.getJSONArray("questions")
 
+            Log.d(TAG, "Claude returned ${questionsArray.length()} questions")
+
             val lines = mutableListOf<OcrLine>()
             val fullTextParts = mutableListOf<String>()
-            var lineIndex = 0
 
             val qCount = questionsArray.length()
-            val sliceHeight = if (qCount > 0) regionRect.height() / qCount else 0
+            // Distribute questions evenly across the page height for virtual Y positions
+            val sliceHeight = if (qCount > 0) regionRect.height() / qCount else regionRect.height()
 
             for (i in 0 until qCount) {
                 val q = questionsArray.getJSONObject(i)
@@ -217,21 +255,23 @@ class ClaudeVisionDetector @Inject constructor(
                 val confidence = q.optDouble("confidence", 0.85).toFloat()
 
                 val optionsObj = q.optJSONObject("options")
-                val optKeys = listOf("A", "B", "C", "D").filter { optionsObj?.optString(it, "")?.isNotBlank() == true }
-                
+                val optKeys = listOf("A", "B", "C", "D")
+                    .filter { optionsObj?.optString(it, "")?.isNotBlank() == true }
+
                 val linesForThisQ = 1 + optKeys.size
-                val lineH = if (linesForThisQ > 0) sliceHeight / linesForThisQ else sliceHeight
+                val lineH = if (linesForThisQ > 0) sliceHeight / linesForThisQ else VIRTUAL_LINE_HEIGHT_PX
                 var currentY = regionRect.top + (i * sliceHeight)
 
                 val questionHeader = "$number. $text"
                 fullTextParts.add(questionHeader)
 
-                val matchedQuestionRect = findMatchingRect(text, mlKitLines, Rect(regionRect.left, currentY, regionRect.right, currentY + lineH - 1))
+                val defaultHeaderRect = Rect(regionRect.left, currentY, regionRect.right, currentY + lineH - 1)
+                val headerRect = findMatchingRect(text, mlKitLines, defaultHeaderRect)
                 lines.add(OcrLine(
                     text = questionHeader,
-                    boundingBox = matchedQuestionRect,
+                    boundingBox = headerRect,
                     confidence = confidence,
-                    lineIndex = lineIndex++
+                    lineIndex = lines.size
                 ))
                 currentY += lineH
 
@@ -240,13 +280,14 @@ class ClaudeVisionDetector @Inject constructor(
                         val optText = optionsObj.optString(optKey, "")
                         val optLine = "$optKey) $optText"
                         fullTextParts.add(optLine)
-                        
-                        val matchedOptRect = findMatchingRect(optText, mlKitLines, Rect(regionRect.left, currentY, regionRect.right, currentY + lineH - 1))
+
+                        val defaultOptRect = Rect(regionRect.left, currentY, regionRect.right, currentY + lineH - 1)
+                        val optRect = findMatchingRect(optText, mlKitLines, defaultOptRect)
                         lines.add(OcrLine(
                             text = optLine,
-                            boundingBox = matchedOptRect,
+                            boundingBox = optRect,
                             confidence = confidence,
-                            lineIndex = lineIndex++
+                            lineIndex = lines.size
                         ))
                         currentY += lineH
                     }
@@ -262,14 +303,13 @@ class ClaudeVisionDetector @Inject constructor(
                 regionRect = regionRect
             ))
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse Claude response", e)
+            Log.e(TAG, "Failed to parse Claude response: $bodyStr", e)
             emptyList()
         }
     }
 
     private fun bitmapToBase64(bitmap: Bitmap): String {
         val outputStream = ByteArrayOutputStream()
-        // Scale down if too large to stay within API limits (~5MB)
         val maxDim = 2000
         val scaled = if (bitmap.width > maxDim || bitmap.height > maxDim) {
             val ratio = minOf(maxDim.toFloat() / bitmap.width, maxDim.toFloat() / bitmap.height)

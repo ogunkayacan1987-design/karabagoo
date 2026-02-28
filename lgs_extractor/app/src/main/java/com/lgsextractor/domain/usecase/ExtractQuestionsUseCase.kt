@@ -34,11 +34,21 @@ class ExtractQuestionsUseCase @Inject constructor(
         val pages = pageRange ?: (0 until document.pageCount)
         val allQuestions = mutableListOf<Question>()
 
-        // Retrieve Claude API key once for the entire extraction session
-        // Retrieve Claude API key once for the entire extraction session
-        val claudeApiKey = if (config.useClaudeVision || config.ocrEngine == com.lgsextractor.domain.model.OcrEngineType.CLAUDE_VISION) {
-            apiKeyManager.getClaudeApiKey()
-        } else null
+        val useClaudeVision = config.useClaudeVision ||
+            config.ocrEngine == com.lgsextractor.domain.model.OcrEngineType.CLAUDE_VISION
+        val claudeApiKey = if (useClaudeVision) apiKeyManager.getClaudeApiKey() else null
+
+        // Warn early if Claude Vision is requested but no key is stored
+        if (useClaudeVision && claudeApiKey.isNullOrBlank()) {
+            emit(ProcessingProgress(
+                currentPage = 0,
+                totalPages = pages.count(),
+                phase = com.lgsextractor.domain.model.ProcessingPhase.ERROR,
+                questionsFound = 0,
+                message = "Claude Vision aktif ama API anahtarı bulunamadı. Lütfen Ayarlar'dan anahtarı kaydedin."
+            ))
+            return@flow
+        }
 
         val geminiApiKey = if (config.useGeminiVision || config.ocrEngine == com.lgsextractor.domain.model.OcrEngineType.GEMINI_VISION) {
             apiKeyManager.getGeminiApiKey()
