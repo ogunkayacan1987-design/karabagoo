@@ -37,7 +37,7 @@ data class DetectionConfig(
 
     // Claude Vision AI
     val useClaudeVision: Boolean = false,
-    val claudeModel: String = "claude-opus-4-6",
+    val claudeModel: String = "claude-haiku-4-5-20251001",  // haiku: 5-10x faster than opus, sufficient for detection
     val claudeMaxTokens: Int = 16000,  // 4096 was too low for pages with long Turkish passages
     
     // Gemini Vision AI
