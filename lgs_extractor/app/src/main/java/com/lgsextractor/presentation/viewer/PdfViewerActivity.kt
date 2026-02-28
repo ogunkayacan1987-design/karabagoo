@@ -6,9 +6,11 @@ import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.activity.viewModels
@@ -19,13 +21,23 @@ import com.google.android.material.snackbar.Snackbar
 import com.lgsextractor.R
 import com.lgsextractor.databinding.ActivityPdfViewerBinding
 import com.lgsextractor.domain.model.BoundingBox
+import com.lgsextractor.domain.model.DetectionConfig
 import com.lgsextractor.domain.model.Question
 import com.lgsextractor.presentation.export.ExportActivity
 import com.lgsextractor.presentation.questions.QuestionListActivity
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 @AndroidEntryPoint
 class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListener {
@@ -265,6 +277,14 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
                 isChecked = claudeEnabled
             }
 
+            val btnTestClaude = Button(this@PdfViewerActivity).apply {
+                text = "Claude Bağlantısını Test Et"
+            }
+            val tvTestResult = TextView(this@PdfViewerActivity).apply {
+                setPadding(0, 8, 0, 8)
+                textSize = 12f
+            }
+
             layout.addView(labelGeminiKey)
             layout.addView(editGeminiKey)
             layout.addView(labelGeminiModel)
@@ -273,6 +293,10 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
             layout.addView(labelClaudeKey)
             layout.addView(editClaudeKey)
             layout.addView(checkClaudeVision)
+            layout.addView(btnTestClaude)
+            layout.addView(tvTestResult)
+
+            val scrollView = ScrollView(this@PdfViewerActivity).also { it.addView(layout) }
 
             // Ensure mutually exclusive checking for AI vision engines to prevent double-billing and collisions
             checkGeminiVision.setOnCheckedChangeListener { _, isChecked ->
@@ -282,9 +306,24 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
                 if (isChecked) checkGeminiVision.isChecked = false
             }
 
+            btnTestClaude.setOnClickListener {
+                val key = editClaudeKey.text.toString().trim()
+                if (key.isBlank()) {
+                    tvTestResult.text = "❌ API anahtarı boş!"
+                    return@setOnClickListener
+                }
+                tvTestResult.text = "⏳ Test ediliyor..."
+                btnTestClaude.isEnabled = false
+                lifecycleScope.launch {
+                    val result = testClaudeApiKey(key)
+                    tvTestResult.text = result
+                    btnTestClaude.isEnabled = true
+                }
+            }
+
             MaterialAlertDialogBuilder(this@PdfViewerActivity)
                 .setTitle("AI Ayarları")
-                .setView(layout)
+                .setView(scrollView)
                 .setNegativeButton("İptal", null)
                 .setPositiveButton("Kaydet") { _, _ ->
                     val newClaudeKey = editClaudeKey.text.toString().trim()
@@ -321,6 +360,53 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
                     Snackbar.make(binding.root, "Ayarlar kaydedildi", Snackbar.LENGTH_SHORT).show()
                 }
                 .show()
+        }
+    }
+
+    /** Makes a minimal Claude API call and returns a human-readable result string. */
+    private suspend fun testClaudeApiKey(apiKey: String): String = withContext(Dispatchers.IO) {
+        try {
+            val client = OkHttpClient.Builder()
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .build()
+
+            val body = JSONObject().apply {
+                put("model", "claude-haiku-4-5-20251001")
+                put("max_tokens", 32)
+                put("messages", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("role", "user")
+                        put("content", "Merhaba, sadece 'OK' yaz.")
+                    })
+                })
+            }.toString()
+
+            val request = Request.Builder()
+                .url("https://api.anthropic.com/v1/messages")
+                .addHeader("x-api-key", apiKey)
+                .addHeader("anthropic-version", "2023-06-01")
+                .addHeader("content-type", "application/json")
+                .post(body.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string() ?: "(boş yanıt)"
+
+            if (response.isSuccessful) {
+                val text = JSONObject(responseBody)
+                    .getJSONArray("content")
+                    .getJSONObject(0)
+                    .getString("text")
+                "✅ Bağlantı başarılı!\nYanıt: $text"
+            } else {
+                val errorMsg = runCatching {
+                    JSONObject(responseBody).optString("error", responseBody)
+                }.getOrDefault(responseBody)
+                "❌ Hata ${response.code}:\n$errorMsg"
+            }
+        } catch (e: Exception) {
+            "❌ Bağlantı hatası:\n${e.javaClass.simpleName}: ${e.message}"
         }
     }
 
