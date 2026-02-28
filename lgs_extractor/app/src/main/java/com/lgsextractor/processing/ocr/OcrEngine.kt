@@ -73,6 +73,8 @@ class OcrEngine @Inject constructor(
             val columnBitmap = cvProcessor.cropRegion(page, regionRect)
                 ?: return@forEachIndexed
 
+            // preprocessForOcr (grayscale + CLAHE) is good for ML Kit/Tesseract
+            // but Claude/Gemini Vision need the original color image to read text reliably.
             val processedBitmap = if (page.bitmapPath.isNotEmpty()) {
                 cvProcessor.preprocessForOcr(columnBitmap)
             } else columnBitmap
@@ -80,12 +82,12 @@ class OcrEngine @Inject constructor(
             val result = when {
                 config.useGeminiVision || config.ocrEngine == OcrEngineType.GEMINI_VISION -> {
                     if (geminiKey != null) {
-                        // Obtain baseline bounding boxes from ML Kit first
+                        // ML Kit baseline for bounding boxes; Gemini gets original color bitmap
                         val mlKitResult = mlKitOcr.recognizeText(processedBitmap, colIdx, regionRect)
                         val mlKitLines = mlKitResult?.textLines ?: emptyList()
 
                         val geminiResults = geminiVisionDetector.detectQuestions(
-                            pageBitmap = processedBitmap,
+                            pageBitmap = columnBitmap,  // original color, not grayscale
                             apiKey = geminiKey,
                             config = config,
                             columnIndex = colIdx,
@@ -97,12 +99,12 @@ class OcrEngine @Inject constructor(
                 }
                 config.useClaudeVision || config.ocrEngine == OcrEngineType.CLAUDE_VISION -> {
                     if (claudeKey != null) {
-                        // Obtain baseline bounding boxes from ML Kit first
+                        // ML Kit baseline for bounding boxes; Claude gets original color bitmap
                         val mlKitResult = mlKitOcr.recognizeText(processedBitmap, colIdx, regionRect)
                         val mlKitLines = mlKitResult?.textLines ?: emptyList()
 
                         val claudeResults = claudeVisionDetector.detectQuestions(
-                            pageBitmap = processedBitmap,
+                            pageBitmap = columnBitmap,  // original color, not grayscale
                             apiKey = claudeKey,
                             config = config,
                             columnIndex = colIdx,
@@ -129,8 +131,10 @@ class OcrEngine @Inject constructor(
             }
 
             result?.let { results.add(it) }
-            processedBitmap.recycle()
-            if (processedBitmap !== columnBitmap) columnBitmap.recycle()
+            // processedBitmap and columnBitmap are different objects when preprocessing ran.
+            // Always recycle processedBitmap; recycle columnBitmap only if it differs.
+            if (processedBitmap !== columnBitmap) processedBitmap.recycle()
+            columnBitmap.recycle()
         }
 
         return results
