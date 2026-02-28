@@ -38,6 +38,12 @@ class ClaudeVisionDetector @Inject constructor(
         private const val API_URL = "https://api.anthropic.com/v1/messages"
         private const val ANTHROPIC_VERSION = "2023-06-01"
         private const val VIRTUAL_LINE_HEIGHT_PX = 60
+        // If the first ML Kit line inside a Claude bbox starts more than this fraction of
+        // the region height below the bbox top, assume Claude included inter-question
+        // whitespace and snap the top down to the first real text line.
+        // (LGS questions always begin with "N." so the first line is never below a chart.)
+        private const val BLANK_TOP_FRACTION = 0.06f   // ~6% of page height
+        private const val SNAP_TOP_PADDING_PX = 12     // small upward margin after snapping
     }
 
     private val httpClient = OkHttpClient.Builder()
@@ -153,7 +159,12 @@ class ClaudeVisionDetector @Inject constructor(
         - y: sorunun üst kenarı (dikey)
         - width: sorunun genişliği
         - height: sorunun yüksekliği
-        Her soruyu grafik/tablo/resim dahil tüm içeriğiyle sınırlayan tam kutuyu belirt.
+
+        BBOX KURALLARI:
+        - bbox.y → sorunun soru numarasının veya ilk içerik öğesinin (metin, resim, grafik) TAM başladığı satır.
+          Önceki soruyla arasındaki BOŞLUK veya BEYAZ ALAN kesinlikle dahil edilmemeli.
+        - bbox.height → son şıkkın (D) veya son görsel içeriğin bittiği yere kadar olmalı.
+        - Grafik, tablo ve resimler sorunun içeriğine dahilse bbox içinde olmalı.
 
         Sadece JSON yanıt ver, açıklama ekleme. Eğer sayfa hiç soru içermiyorsa {"questions": []} döndür.
     """.trimIndent()
@@ -342,9 +353,25 @@ class ClaudeVisionDetector @Inject constructor(
                 if (bx != null && by != null && bw != null && bh != null
                     && bw > 0.0 && bh > 0.0) {
                     val bLeft   = (regionRect.left + bx          * regionRect.width()).toInt()
-                    val bTop    = (regionRect.top  + by          * regionRect.height()).toInt()
+                    var bTop    = (regionRect.top  + by          * regionRect.height()).toInt()
                     val bRight  = (regionRect.left + (bx + bw)   * regionRect.width()).toInt()
                     val bBottom = (regionRect.top  + (by + bh)   * regionRect.height()).toInt()
+
+                    // Safety net: if Claude included inter-question whitespace at the top,
+                    // the first ML Kit line inside the bbox will be much lower than bTop.
+                    // Snap bTop down to the first text line so the crop has no blank header.
+                    // (Safe for LGS: questions always start with "N." before any image.)
+                    val blankThreshold = (regionRect.height() * BLANK_TOP_FRACTION).toInt()
+                    val firstLineInBox = mlKitLines
+                        .filter { it.boundingBox.top in bTop..bBottom &&
+                                  (it.boundingBox.left + it.boundingBox.right) / 2 in bLeft..bRight }
+                        .minByOrNull { it.boundingBox.top }
+                    if (firstLineInBox != null &&
+                        firstLineInBox.boundingBox.top - bTop > blankThreshold) {
+                        bTop = maxOf(bTop, firstLineInBox.boundingBox.top - SNAP_TOP_PADDING_PX)
+                        logToFile("Snapped Q${qData.number} top from ${(by * regionRect.height()).toInt()} to $bTop (blank header removed)")
+                    }
+
                     return@mapIndexed HeaderPos(bTop, bLeft, bRight, bBottom, anchored = true)
                 }
 
