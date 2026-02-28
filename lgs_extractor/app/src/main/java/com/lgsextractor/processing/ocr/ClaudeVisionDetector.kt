@@ -166,6 +166,12 @@ class ClaudeVisionDetector @Inject constructor(
         - bbox.height → son şıkkın (D) veya son görsel içeriğin bittiği yere kadar olmalı.
         - Grafik, tablo ve resimler sorunun içeriğine dahilse bbox içinde olmalı.
 
+        SORU NUMARASI KURALI (ÇOK ÖNEMLİ):
+        - Soru numaraları yalnızca "1.", "2.", "17." gibi ARAP RAKAMLARIDAN oluşur (1-30 arası).
+        - Soru içindeki "I. …", "II. …", "III. …", "IV. …" gibi ROMEN RAKAMLARI yeni soru DEĞİLDİR;
+          bunlar mevcut sorunun devamıdır ve aynı bbox içinde kalmalıdır.
+        - Şıklar (A, B, C, D) da asla yeni soru başlangıcı sayılmaz.
+
         Sadece JSON yanıt ver, açıklama ekleme. Eğer sayfa hiç soru içermiyorsa {"questions": []} döndür.
     """.trimIndent()
 
@@ -357,19 +363,28 @@ class ClaudeVisionDetector @Inject constructor(
                     val bRight  = (regionRect.left + (bx + bw)   * regionRect.width()).toInt()
                     val bBottom = (regionRect.top  + (by + bh)   * regionRect.height()).toInt()
 
-                    // Safety net: if Claude included inter-question whitespace at the top,
-                    // the first ML Kit line inside the bbox will be much lower than bTop.
-                    // Snap bTop down to the first text line so the crop has no blank header.
-                    // (Safe for LGS: questions always start with "N." before any image.)
+                    // Safety net: if Claude included inter-question whitespace or a page
+                    // header at the top of the bbox, snap bTop down to the actual first
+                    // line of this question.
+                    // Priority 1: exact "N." / "N)" ML Kit line inside the bbox (most precise;
+                    //   also skips page-header text that would appear first in bbox).
+                    // Priority 2: any first ML Kit line in bbox (removes blank white space).
                     val blankThreshold = (regionRect.height() * BLANK_TOP_FRACTION).toInt()
-                    val firstLineInBox = mlKitLines
-                        .filter { it.boundingBox.top in bTop..bBottom &&
-                                  (it.boundingBox.left + it.boundingBox.right) / 2 in bLeft..bRight }
-                        .minByOrNull { it.boundingBox.top }
-                    if (firstLineInBox != null &&
-                        firstLineInBox.boundingBox.top - bTop > blankThreshold) {
-                        bTop = maxOf(bTop, firstLineInBox.boundingBox.top - SNAP_TOP_PADDING_PX)
-                        logToFile("Snapped Q${qData.number} top from ${(by * regionRect.height()).toInt()} to $bTop (blank header removed)")
+                    val numStr2 = "${qData.number}"
+                    val numLineInBox = mlKitLines.firstOrNull { line ->
+                        Regex("""^0?${Regex.escape(numStr2)}\s*[.):]""")
+                            .containsMatchIn(line.text.trim()) &&
+                        line.boundingBox.top in bTop..bBottom
+                    }
+                    val snapLine = numLineInBox
+                        ?: mlKitLines
+                            .filter { it.boundingBox.top in bTop..bBottom &&
+                                      (it.boundingBox.left + it.boundingBox.right) / 2 in bLeft..bRight }
+                            .minByOrNull { it.boundingBox.top }
+                    if (snapLine != null && snapLine.boundingBox.top - bTop > blankThreshold) {
+                        val oldTop = bTop
+                        bTop = maxOf(bTop, snapLine.boundingBox.top - SNAP_TOP_PADDING_PX)
+                        logToFile("Snapped Q${qData.number} top $oldTop→$bTop via ${if (numLineInBox != null) "numLine" else "firstLine"}")
                     }
 
                     return@mapIndexed HeaderPos(bTop, bLeft, bRight, bBottom, anchored = true)
@@ -393,17 +408,20 @@ class ClaudeVisionDetector @Inject constructor(
                     HeaderPos(virtualY, regionRect.left, regionRect.right, null, anchored = false)
             }
 
-            // Promote to multi-column if any anchored header is in the right half
-            if (!isMultiColumn && headerPositions.any { it.anchored && it.left > halfX })
+            // Promote to multi-column if any anchored header is in the right half.
+            // Use >= so a bbox whose left edge is exactly at halfX is counted as right-column.
+            if (!isMultiColumn && headerPositions.any { it.anchored && it.left >= halfX })
                 isMultiColumn = true
 
             // --- Pass D: Final column assignment, OcrLine construction ---
             val questionCols: List<Int> = headerPositions.mapIndexed { i, pos ->
                 when {
-                    pos.anchored && pos.left > halfX -> 1
-                    pos.anchored                     -> 0
-                    isMultiColumn                    -> preColAssign[i]
-                    else                             -> 0
+                    // >= halfX: a right-column question whose bbox.left lands exactly on the
+                    // centre line is still correctly assigned to col 1.
+                    pos.anchored && pos.left >= halfX -> 1
+                    pos.anchored                      -> 0
+                    isMultiColumn                     -> preColAssign[i]
+                    else                              -> 0
                 }
             }
 
