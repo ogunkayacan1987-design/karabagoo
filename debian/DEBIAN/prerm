@@ -1,0 +1,7 @@
+#!/bin/bash
+set -e
+
+# Autostart girisi kaldir
+rm -f /etc/xdg/autostart/okul-mesajlasma.desktop 2>/dev/null || true
+
+echo "Okul Mesajlasma Sistemi kaldiriliyor..."

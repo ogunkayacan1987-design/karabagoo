@@ -1,0 +1,6 @@
+[Okul bilgisayarlari icin sifresiz kapatma izni]
+Identity=unix-user:*
+Action=org.freedesktop.login1.power-off;org.freedesktop.login1.power-off-multiple-sessions
+ResultAny=yes
+ResultInactive=yes
+ResultActive=yes

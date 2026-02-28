@@ -1,0 +1,17 @@
+#!/bin/bash
+set -e
+
+# Desktop veritabanini guncelle
+if command -v update-desktop-database &>/dev/null; then
+    update-desktop-database -q /usr/share/applications/ 2>/dev/null || true
+fi
+
+# Icon cache guncelle
+if command -v gtk-update-icon-cache &>/dev/null; then
+    gtk-update-icon-cache -q /usr/share/icons/hicolor/ 2>/dev/null || true
+fi
+
+# Calistirilabilir yap
+chmod +x /usr/share/okul-mesajlasma/okul_mesajlasma
+
+echo "Okul Mesajlasma Sistemi basariyla kuruldu."

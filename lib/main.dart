@@ -14,16 +14,19 @@ import 'services/password_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Windows icin pencere ayarlari
+  // Windows ve Linux icin pencere ayarlari
   await WindowHelper.ensureInitialized();
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-     await _initWindowManager();
+    await _initWindowManager();
   }
 
   runApp(const OkulMesajlasmaApp());
 }
 
-/// Windows pencere yoneticisini baslat
+/// Masaustu platformu kontrolu (Windows + Linux)
+bool get isDesktop => Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+
+/// Pencere yoneticisini baslat (Windows + Linux)
 Future<void> _initWindowManager() async {
   try {
     // WindowHelper handles platform checks internally too, but good to be explicit here
@@ -56,7 +59,7 @@ class OkulMesajlasmaApp extends StatelessWidget {
           brightness: Brightness.light,
         ),
         useMaterial3: true,
-        fontFamily: (Platform.isWindows || Platform.isLinux || Platform.isMacOS) ? 'Segoe UI' : null,
+        fontFamily: Platform.isWindows ? 'Segoe UI' : (Platform.isLinux ? 'Noto Sans' : null),
       ),
       home: const LicenseCheckWrapper(),
     );
@@ -82,7 +85,7 @@ class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> with WindowLi
   @override
   void initState() {
     super.initState();
-    _setupWindowListener(); 
+    _setupWindowListener();
     _checkLicense();
   }
   
@@ -100,7 +103,7 @@ class _LicenseCheckWrapperState extends State<LicenseCheckWrapper> with WindowLi
       await WindowHelper.removeListener(this);
   }
 
-  // X butonuna basinca minimize et (sadece Windows)
+  // X butonuna basinca minimize et (Windows + Linux)
   @override
   void onWindowClose() async {
     await WindowHelper.minimize();

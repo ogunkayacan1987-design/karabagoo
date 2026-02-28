@@ -1,0 +1,11 @@
+Package: okul-mesajlasma
+Version: 1.1.0
+Section: education
+Priority: optional
+Architecture: amd64
+Depends: libgtk-3-0, libgstreamer1.0-0, libgstreamer-plugins-base1.0-0, gstreamer1.0-plugins-good, xdg-utils
+Maintainer: Karabag H.O.Akarsel Ortaokulu
+Description: Okul Mesajlasma Sistemi
+ WiFi tabanli okul ici mesajlasma ve dosya paylasim sistemi.
+ Sinif ekrani, yonetim paneli ve ogretmen paneli icermektedir.
+ Pardus ve Debian tabanli dagitimlarla uyumludur.

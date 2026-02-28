@@ -163,9 +163,11 @@ class _ClientScreenState extends State<ClientScreen> {
       ),
     );
 
-    // Windows'u kapat (30 saniye sonra)
+    // Bilgisayari kapat (30 saniye sonra)
     if (Platform.isWindows) {
       await Process.run('shutdown', ['/s', '/t', '30', '/c', 'Okul yonetimi tarafindan kapatma komutu gonderildi.']);
+    } else if (Platform.isLinux) {
+      await Process.run('shutdown', ['-h', '+1', 'Okul yonetimi tarafindan kapatma komutu gonderildi.']);
     }
   }
 
@@ -400,6 +402,8 @@ class _ClientScreenState extends State<ClientScreen> {
     try {
       if (Platform.isWindows) {
         await Process.run('cmd', ['/c', 'start', '', filePath]);
+      } else if (Platform.isLinux) {
+        await Process.run('xdg-open', [filePath]);
       }
     } catch (e) {
       _showSnackBar('Dosya acilamadi: $e', Colors.orange);
@@ -624,7 +628,7 @@ class _ClientScreenState extends State<ClientScreen> {
           IconButton(
             icon: const Icon(Icons.minimize),
             onPressed: () async {
-              await WindowHelper.minimize(); // [NEW] Use helper
+              await WindowHelper.minimize();
             },
             tooltip: 'Simge Durumuna Kucult',
           ),
