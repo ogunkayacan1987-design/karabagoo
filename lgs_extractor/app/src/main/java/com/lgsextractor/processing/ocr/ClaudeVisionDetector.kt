@@ -265,6 +265,8 @@ class ClaudeVisionDetector @Inject constructor(
                 val optKeys: List<String>,
                 val optionsObj: org.json.JSONObject?
             )
+            // Sort by question number so that column pre-assignment is order-independent
+            // (Claude may return questions in reading order: alternating left/right column by row)
             val qDataList = (0 until qCount).map { i ->
                 val q = questionsArray.getJSONObject(i)
                 val opts = q.optJSONObject("options")
@@ -275,7 +277,7 @@ class ClaudeVisionDetector @Inject constructor(
                     optKeys = listOf("A","B","C","D").filter { opts?.optString(it,"")?.isNotBlank() == true },
                     optionsObj = opts
                 )
-            }
+            }.sortedBy { it.number }
 
             // --- Pass A: Detect multi-column ---
             val halfX = regionRect.left + regionRect.width() / 2
@@ -285,12 +287,14 @@ class ClaudeVisionDetector @Inject constructor(
             var isMultiColumn = expectedColumns >= 2 || (mlLeft >= 5 && mlRight >= 5)
 
             // --- Pass B: Pre-assign columns by order; compute per-column virtual Y ---
-            // First half of questions → col 0, second half → col 1 (standard LGS layout)
-            val preColAssign: List<Int> = (0 until qCount).map { i ->
-                if (isMultiColumn && i >= qCount / 2) 1 else 0
-            }
-            // Per-column slice: in 2-col mode each col has ~qCount/2 questions
+            // Lower-numbered questions → col 0 (left), higher-numbered → col 1 (right).
+            // questionsPerCol uses ceiling division so col 0 gets the extra question on odd
+            // totals (matches standard LGS layout); preColAssign uses the same threshold
+            // so it is consistent with sliceHeight.
             val questionsPerCol = if (isMultiColumn && qCount >= 2) maxOf(1, (qCount + 1) / 2) else qCount
+            val preColAssign: List<Int> = (0 until qCount).map { i ->
+                if (isMultiColumn && i >= questionsPerCol) 1 else 0
+            }
             val sliceHeight = regionRect.height() / questionsPerCol
             val colQIdx = IntArray(2) { 0 }   // running question index within each column
 
@@ -303,12 +307,21 @@ class ClaudeVisionDetector @Inject constructor(
 
                 val defaultRect = Rect(regionRect.left, virtualY, regionRect.right,
                                        virtualY + VIRTUAL_LINE_HEIGHT_PX)
-                val numMatch = findMatchingRect("${qData.number}.", mlKitLines, defaultRect)
-                val resolved = if (numMatch !== defaultRect) numMatch
-                               else findMatchingRect(qData.text, mlKitLines, defaultRect)
 
-                if (resolved !== defaultRect)
-                    HeaderPos(resolved.top, resolved.left, resolved.right, anchored = true)
+                // Direct number-based anchor: look for a line starting with "N." or "N)"
+                // (findMatchingRect normalises the number string to digits only, which is
+                // often < 3 chars and returns immediately — use a direct regex instead)
+                val numStr = "${qData.number}"
+                val numLine = mlKitLines.firstOrNull { line ->
+                    val t = line.text.trim()
+                    Regex("""^0?${Regex.escape(numStr)}\s*[.):]""").containsMatchIn(t)
+                }
+                val anchoredRect = numLine?.boundingBox
+                    ?: findMatchingRect(qData.text, mlKitLines, defaultRect)
+                        .takeIf { it !== defaultRect }
+
+                if (anchoredRect != null)
+                    HeaderPos(anchoredRect.top, anchoredRect.left, anchoredRect.right, anchored = true)
                 else
                     HeaderPos(virtualY, regionRect.left, regionRect.right, anchored = false)
             }
