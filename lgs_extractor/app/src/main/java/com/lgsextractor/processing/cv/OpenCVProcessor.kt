@@ -385,6 +385,8 @@ class OpenCVProcessor @Inject constructor() {
         columnCount = 1,
         columnBoundaries = listOf(ColumnBoundary(0, page.width, 0)),
         textBlocks = emptyList(), horizontalGaps = emptyList(),
-        hasHeader = false, hasFooter = false
+        hasHeader = false, hasFooter = false,
+        headerHeight = 0,
+        footerStart = page.height   // BUG FIX: default was 0, causing regionRect height=0
     )
 }

@@ -56,11 +56,18 @@ class OcrEngine @Inject constructor(
 
         // Process each detected column separately for better accuracy
         layoutInfo.columnBoundaries.forEachIndexed { colIdx, column ->
+            // Guard: footerStart must be greater than headerHeight to produce a valid region.
+            // If layout analysis returned degenerate values (e.g. emptyLayout fallback),
+            // fall back to the full page extent for this column.
+            val effectiveTop = layoutInfo.headerHeight
+            val effectiveBottom = if (layoutInfo.footerStart > layoutInfo.headerHeight)
+                layoutInfo.footerStart else page.height
+
             val regionRect = Rect(
                 column.startX,
-                layoutInfo.headerHeight,
+                effectiveTop,
                 column.endX,
-                layoutInfo.footerStart
+                effectiveBottom
             )
 
             val columnBitmap = cvProcessor.cropRegion(page, regionRect)
