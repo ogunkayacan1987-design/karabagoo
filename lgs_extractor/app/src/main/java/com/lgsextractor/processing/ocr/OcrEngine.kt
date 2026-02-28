@@ -1,7 +1,5 @@
 package com.lgsextractor.processing.ocr
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Rect
 import android.util.Log
 import com.lgsextractor.domain.model.DetectionConfig
@@ -54,15 +52,54 @@ class OcrEngine @Inject constructor(
         val claudeKey = claudeApiKey?.takeIf { it.isNotBlank() }
         val geminiKey = geminiApiKey?.takeIf { it.isNotBlank() }
 
-        // Process each detected column separately for better accuracy
+        val effectiveTop = layoutInfo.headerHeight
+        val effectiveBottom = if (layoutInfo.footerStart > layoutInfo.headerHeight)
+            layoutInfo.footerStart else page.height
+
+        // Claude/Gemini Vision: send full page as one image.
+        // Column-by-column splitting produces narrow images that degrade vision accuracy.
+        // Vision models understand multi-column layouts natively.
+        if ((config.useClaudeVision || config.ocrEngine == OcrEngineType.CLAUDE_VISION) && claudeKey != null) {
+            val fullRegion = Rect(0, effectiveTop, page.width, effectiveBottom)
+            val fullBitmap = cvProcessor.cropRegion(page, fullRegion) ?: return results
+            val processedBitmap = if (page.bitmapPath.isNotEmpty()) cvProcessor.preprocessForOcr(fullBitmap) else fullBitmap
+            val mlKitLines = mlKitOcr.recognizeText(processedBitmap, 0, fullRegion)?.textLines ?: emptyList()
+            if (processedBitmap !== fullBitmap) processedBitmap.recycle()
+            val claudeResults = claudeVisionDetector.detectQuestions(
+                pageBitmap = fullBitmap,
+                apiKey = claudeKey,
+                config = config,
+                columnIndex = 0,
+                regionRect = fullRegion,
+                mlKitLines = mlKitLines
+            )
+            fullBitmap.recycle()
+            return claudeResults
+        }
+
+        if ((config.useGeminiVision || config.ocrEngine == OcrEngineType.GEMINI_VISION) && geminiKey != null) {
+            val fullRegion = Rect(0, effectiveTop, page.width, effectiveBottom)
+            val fullBitmap = cvProcessor.cropRegion(page, fullRegion) ?: return results
+            val processedBitmap = if (page.bitmapPath.isNotEmpty()) cvProcessor.preprocessForOcr(fullBitmap) else fullBitmap
+            val mlKitLines = mlKitOcr.recognizeText(processedBitmap, 0, fullRegion)?.textLines ?: emptyList()
+            if (processedBitmap !== fullBitmap) processedBitmap.recycle()
+            val geminiResults = geminiVisionDetector.detectQuestions(
+                pageBitmap = fullBitmap,
+                apiKey = geminiKey,
+                config = config,
+                columnIndex = 0,
+                regionRect = fullRegion,
+                mlKitLines = mlKitLines
+            )
+            fullBitmap.recycle()
+            return geminiResults
+        }
+
+        // ML Kit / Tesseract / Hybrid: process each detected column separately
         layoutInfo.columnBoundaries.forEachIndexed { colIdx, column ->
             // Guard: footerStart must be greater than headerHeight to produce a valid region.
             // If layout analysis returned degenerate values (e.g. emptyLayout fallback),
             // fall back to the full page extent for this column.
-            val effectiveTop = layoutInfo.headerHeight
-            val effectiveBottom = if (layoutInfo.footerStart > layoutInfo.headerHeight)
-                layoutInfo.footerStart else page.height
-
             val regionRect = Rect(
                 column.startX,
                 effectiveTop,
@@ -74,60 +111,25 @@ class OcrEngine @Inject constructor(
                 ?: return@forEachIndexed
 
             // preprocessForOcr (grayscale + CLAHE) is good for ML Kit/Tesseract
-            // but Claude/Gemini Vision need the original color image to read text reliably.
             val processedBitmap = if (page.bitmapPath.isNotEmpty()) {
                 cvProcessor.preprocessForOcr(columnBitmap)
             } else columnBitmap
 
-            val result = when {
-                config.useGeminiVision || config.ocrEngine == OcrEngineType.GEMINI_VISION -> {
-                    if (geminiKey != null) {
-                        // ML Kit baseline for bounding boxes; Gemini gets original color bitmap
-                        val mlKitResult = mlKitOcr.recognizeText(processedBitmap, colIdx, regionRect)
-                        val mlKitLines = mlKitResult?.textLines ?: emptyList()
-
-                        val geminiResults = geminiVisionDetector.detectQuestions(
-                            pageBitmap = columnBitmap,  // original color, not grayscale
-                            apiKey = geminiKey,
-                            config = config,
-                            columnIndex = colIdx,
-                            regionRect = regionRect,
-                            mlKitLines = mlKitLines
-                        )
-                        if (geminiResults.isNotEmpty()) geminiResults.first() else null
-                    } else null
-                }
-                config.useClaudeVision || config.ocrEngine == OcrEngineType.CLAUDE_VISION -> {
-                    if (claudeKey != null) {
-                        // ML Kit baseline for bounding boxes; Claude gets original color bitmap
-                        val mlKitResult = mlKitOcr.recognizeText(processedBitmap, colIdx, regionRect)
-                        val mlKitLines = mlKitResult?.textLines ?: emptyList()
-
-                        val claudeResults = claudeVisionDetector.detectQuestions(
-                            pageBitmap = columnBitmap,  // original color, not grayscale
-                            apiKey = claudeKey,
-                            config = config,
-                            columnIndex = colIdx,
-                            regionRect = regionRect,
-                            mlKitLines = mlKitLines
-                        )
-                        if (claudeResults.isNotEmpty()) claudeResults.first() else null
-                    } else null
-                }
-                config.ocrEngine == OcrEngineType.ML_KIT_PRIMARY -> {
+            val result = when (config.ocrEngine) {
+                OcrEngineType.ML_KIT_PRIMARY -> {
                     mlKitOcr.recognizeText(processedBitmap, colIdx, regionRect)
                         ?: tesseractOcr.recognizeText(processedBitmap, colIdx, regionRect)
                 }
-                config.ocrEngine == OcrEngineType.TESSERACT_PRIMARY -> {
+                OcrEngineType.TESSERACT_PRIMARY -> {
                     tesseractOcr.recognizeText(processedBitmap, colIdx, regionRect)
                         ?: mlKitOcr.recognizeText(processedBitmap, colIdx, regionRect)
                 }
-                config.ocrEngine == OcrEngineType.HYBRID -> {
+                OcrEngineType.HYBRID -> {
                     val mlResult = mlKitOcr.recognizeText(processedBitmap, colIdx, regionRect)
                     val tessResult = tesseractOcr.recognizeText(processedBitmap, colIdx, regionRect)
                     mergeResults(mlResult, tessResult, colIdx, regionRect)
                 }
-                else -> null
+                else -> null  // CLAUDE_VISION / GEMINI_VISION handled above
             }
 
             result?.let { results.add(it) }
