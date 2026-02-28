@@ -150,6 +150,19 @@ class QuestionBoundaryInferencer @Inject constructor(
             }
         }
 
+        // Resolve Y overlaps: adjacent questions in the same column must not overlap.
+        // Padding applied to both sides of a shared boundary causes ~40px overlap;
+        // split the difference at the midpoint.
+        for (i in 0 until results.size - 1) {
+            val a = results[i].boundingBox
+            val b = results[i + 1].boundingBox
+            if (a.bottom >= b.top) {
+                val mid = (a.bottom + b.top) / 2
+                results[i] = results[i].copy(boundingBox = a.copy(bottom = mid))
+                results[i + 1] = results[i + 1].copy(boundingBox = b.copy(top = mid + 1))
+            }
+        }
+
         return results
     }
 
