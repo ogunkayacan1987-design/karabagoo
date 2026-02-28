@@ -122,7 +122,8 @@ class ClaudeVisionDetector @Inject constructor(
 
     private fun buildPrompt(): String = """
         Bu bir Türkçe LGS (Liselere Geçiş Sınavı) sınav sayfasının görüntüsüdür.
-        Sayfadaki tüm soruları tespit et ve her sorunun tam metnini çıkar.
+        Sayfadaki tüm soruları tespit et; her sorunun tam metnini ve görüntü üzerindeki
+        tam konumunu (bbox) çıkar.
 
         Yanıtını aşağıdaki JSON formatında ver:
         {
@@ -136,10 +137,23 @@ class ClaudeVisionDetector @Inject constructor(
                 "C": "C şıkkı metni",
                 "D": "D şıkkı metni"
               },
+              "bbox": {
+                "x": 0.02,
+                "y": 0.05,
+                "width": 0.46,
+                "height": 0.35
+              },
               "confidence": 0.95
             }
           ]
         }
+
+        bbox değerleri 0.0-1.0 arasında oransal koordinatlardır (görüntünün sol üst köşesi 0,0):
+        - x: sorunun sol kenarı (yatay)
+        - y: sorunun üst kenarı (dikey)
+        - width: sorunun genişliği
+        - height: sorunun yüksekliği
+        Her soruyu grafik/tablo/resim dahil tüm içeriğiyle sınırlayan tam kutuyu belirt.
 
         Sadece JSON yanıt ver, açıklama ekleme. Eğer sayfa hiç soru içermiyorsa {"questions": []} döndür.
     """.trimIndent()
@@ -211,21 +225,22 @@ class ClaudeVisionDetector @Inject constructor(
     /**
      * Converts Claude's structured JSON response to a list of OcrResults.
      *
-     * Four-pass approach for accurate multi-column bounding boxes:
+     * Pass 1 — Parse question data (text, options, bbox) and sort by number.
      *
-     * Pass A — Determine isMultiColumn:
-     *   - expectedColumns ≥ 2 (from OpenCV)  OR
-     *   - ML Kit has ≥5 lines in both left and right halves of the page
+     * Pass A — Determine isMultiColumn (expectedColumns ≥ 2 OR ML Kit lines in both halves).
      *
-     * Pass B — Pre-assign each question to a column by ordering (first half → col 0,
-     *   second half → col 1) and compute per-column virtual Y positions.
-     *   Virtual Y uses per-column slice height (pageHeight / questionsPerCol),
-     *   NOT full-page slice height, so that questions span their actual column height.
+     * Pass B — Pre-assign each question to a column by index (first ceil(N/2) → col 0,
+     *   remainder → col 1). Compute per-column virtual Y as fallback positions.
      *
-     * Pass C — Anchor each question header to an ML Kit line.
-     *   Updates column assignment for anchored questions based on real X position.
+     * Pass C — Resolve pixel coordinates for each question header:
+     *   1. Primary: use Claude's bbox field when present — most accurate, covers images/charts.
+     *   2. Fallback: match question number/text against ML Kit OCR lines.
+     *   3. Last resort: virtual Y from Pass B.
+     *   Also carries bbox bottom so Pass D can set the correct question height.
      *
-     * Pass D — Build OcrLines and OcrResults, one per detected column.
+     * Pass D — Assign final column (based on anchored X position), build OcrLines and
+     *   OcrResults per column. Uses bbox bottom (when available) as the authoritative
+     *   question bottom, so the downstream inferencer receives accurate boundaries.
      */
     private fun parseApiResponse(
         bodyStr: String,
@@ -263,19 +278,29 @@ class ClaudeVisionDetector @Inject constructor(
                 val text: String,
                 val confidence: Float,
                 val optKeys: List<String>,
-                val optionsObj: org.json.JSONObject?
+                val optionsObj: org.json.JSONObject?,
+                // Claude-provided normalised bbox [0,1] — null when not present
+                val bboxX: Double? = null,
+                val bboxY: Double? = null,
+                val bboxW: Double? = null,
+                val bboxH: Double? = null
             )
             // Sort by question number so that column pre-assignment is order-independent
             // (Claude may return questions in reading order: alternating left/right column by row)
             val qDataList = (0 until qCount).map { i ->
                 val q = questionsArray.getJSONObject(i)
                 val opts = q.optJSONObject("options")
+                val bb   = q.optJSONObject("bbox")
                 QData(
                     number = q.optInt("number", i + 1),
                     text = q.optString("text", ""),
                     confidence = q.optDouble("confidence", 0.85).toFloat(),
                     optKeys = listOf("A","B","C","D").filter { opts?.optString(it,"")?.isNotBlank() == true },
-                    optionsObj = opts
+                    optionsObj = opts,
+                    bboxX = bb?.optDouble("x"),
+                    bboxY = bb?.optDouble("y"),
+                    bboxW = bb?.optDouble("width"),
+                    bboxH = bb?.optDouble("height")
                 )
             }.sortedBy { it.number }
 
@@ -298,19 +323,34 @@ class ClaudeVisionDetector @Inject constructor(
             val sliceHeight = regionRect.height() / questionsPerCol
             val colQIdx = IntArray(2) { 0 }   // running question index within each column
 
-            // --- Pass C: Anchor to ML Kit positions ---
-            data class HeaderPos(val top: Int, val left: Int, val right: Int, val anchored: Boolean)
+            // --- Pass C: Anchor to real pixel positions ---
+            // Primary: use Claude's bbox when available (most accurate).
+            // Fallback: ML Kit line anchoring or virtual Y.
+            data class HeaderPos(
+                val top: Int, val left: Int, val right: Int,
+                val bottom: Int?,   // non-null when Claude provided a full bbox
+                val anchored: Boolean
+            )
             val headerPositions: List<HeaderPos> = qDataList.mapIndexed { i, qData ->
                 val preCIdx = preColAssign[i]
                 val virtualY = regionRect.top + colQIdx[preCIdx] * sliceHeight
                 colQIdx[preCIdx]++
 
+                // ── Primary: Claude bbox ──────────────────────────────────────────
+                val bx = qData.bboxX; val by = qData.bboxY
+                val bw = qData.bboxW; val bh = qData.bboxH
+                if (bx != null && by != null && bw != null && bh != null
+                    && bw > 0.0 && bh > 0.0) {
+                    val bLeft   = (regionRect.left + bx          * regionRect.width()).toInt()
+                    val bTop    = (regionRect.top  + by          * regionRect.height()).toInt()
+                    val bRight  = (regionRect.left + (bx + bw)   * regionRect.width()).toInt()
+                    val bBottom = (regionRect.top  + (by + bh)   * regionRect.height()).toInt()
+                    return@mapIndexed HeaderPos(bTop, bLeft, bRight, bBottom, anchored = true)
+                }
+
+                // ── Fallback: ML Kit line anchor ──────────────────────────────────
                 val defaultRect = Rect(regionRect.left, virtualY, regionRect.right,
                                        virtualY + VIRTUAL_LINE_HEIGHT_PX)
-
-                // Direct number-based anchor: look for a line starting with "N." or "N)"
-                // (findMatchingRect normalises the number string to digits only, which is
-                // often < 3 chars and returns immediately — use a direct regex instead)
                 val numStr = "${qData.number}"
                 val numLine = mlKitLines.firstOrNull { line ->
                     val t = line.text.trim()
@@ -321,9 +361,9 @@ class ClaudeVisionDetector @Inject constructor(
                         .takeIf { it !== defaultRect }
 
                 if (anchoredRect != null)
-                    HeaderPos(anchoredRect.top, anchoredRect.left, anchoredRect.right, anchored = true)
+                    HeaderPos(anchoredRect.top, anchoredRect.left, anchoredRect.right, null, anchored = true)
                 else
-                    HeaderPos(virtualY, regionRect.left, regionRect.right, anchored = false)
+                    HeaderPos(virtualY, regionRect.left, regionRect.right, null, anchored = false)
             }
 
             // Promote to multi-column if any anchored header is in the right half
@@ -359,7 +399,9 @@ class ClaudeVisionDetector @Inject constructor(
                 entries.forEachIndexed { colQIdx2, entry ->
                     val qTop    = entry.pos.top
                     val nextTop = entries.getOrNull(colQIdx2 + 1)?.pos?.top
-                    val qBottom = if (nextTop != null) nextTop - 1 else regionRect.bottom
+                    // Prefer Claude's exact bbox bottom; fall back to next-question top or region bottom
+                    val qBottom = entry.pos.bottom
+                        ?: if (nextTop != null) nextTop - 1 else regionRect.bottom
                     val safeBottom = maxOf(qBottom, qTop + VIRTUAL_LINE_HEIGHT_PX)
 
                     val qLeft  = if (entry.pos.anchored) entry.pos.left  else colLeft
