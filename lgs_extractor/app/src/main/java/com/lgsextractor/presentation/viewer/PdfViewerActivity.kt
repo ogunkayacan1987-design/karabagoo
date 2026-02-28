@@ -412,7 +412,7 @@ class PdfViewerActivity : AppCompatActivity(), QuestionOverlayView.OverlayListen
 
                 val body = JSONObject().apply {
                     put("model", "claude-opus-4-6")
-                    put("max_tokens", 4096)
+                    put("max_tokens", 16000)
                     put("messages", JSONArray().apply {
                         put(JSONObject().apply {
                             put("role", "user")
