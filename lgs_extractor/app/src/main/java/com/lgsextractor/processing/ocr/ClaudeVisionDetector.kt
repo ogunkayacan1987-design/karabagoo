@@ -209,16 +209,23 @@ class ClaudeVisionDetector @Inject constructor(
     }
 
     /**
-     * Converts Claude's structured JSON response to OcrResult list.
+     * Converts Claude's structured JSON response to a list of OcrResults.
      *
-     * Three-pass approach for accurate multi-column bounding boxes:
-     * 1) Parse question data from JSON
-     * 2) Anchor each question's header to a real ML Kit bounding box (X and Y)
-     * 3) Group questions by column (left vs right) using header X position;
-     *    calculate Y boundaries within each column independently;
-     *    return one OcrResult per column with correct columnIndex and X extents.
+     * Four-pass approach for accurate multi-column bounding boxes:
      *
-     * Falls back to evenly-distributed virtual positions when ML Kit has no matches.
+     * Pass A — Determine isMultiColumn:
+     *   - expectedColumns ≥ 2 (from OpenCV)  OR
+     *   - ML Kit has ≥5 lines in both left and right halves of the page
+     *
+     * Pass B — Pre-assign each question to a column by ordering (first half → col 0,
+     *   second half → col 1) and compute per-column virtual Y positions.
+     *   Virtual Y uses per-column slice height (pageHeight / questionsPerCol),
+     *   NOT full-page slice height, so that questions span their actual column height.
+     *
+     * Pass C — Anchor each question header to an ML Kit line.
+     *   Updates column assignment for anchored questions based on real X position.
+     *
+     * Pass D — Build OcrLines and OcrResults, one per detected column.
      */
     private fun parseApiResponse(
         bodyStr: String,
@@ -244,13 +251,10 @@ class ClaudeVisionDetector @Inject constructor(
                 return emptyList()
             }
 
-            val jsonStr = textContent.substring(jsonStart, jsonEnd + 1)
-            val parsed = JSONObject(jsonStr)
+            val parsed = JSONObject(textContent.substring(jsonStart, jsonEnd + 1))
             val questionsArray = parsed.getJSONArray("questions")
-
-            Log.d(TAG, "Claude returned ${questionsArray.length()} questions")
-
             val qCount = questionsArray.length()
+            Log.d(TAG, "Claude returned $qCount questions")
             if (qCount == 0) return emptyList()
 
             // --- Pass 1: Parse question data ---
@@ -261,84 +265,90 @@ class ClaudeVisionDetector @Inject constructor(
                 val optKeys: List<String>,
                 val optionsObj: org.json.JSONObject?
             )
-
             val qDataList = (0 until qCount).map { i ->
                 val q = questionsArray.getJSONObject(i)
-                val optionsObj = q.optJSONObject("options")
+                val opts = q.optJSONObject("options")
                 QData(
                     number = q.optInt("number", i + 1),
                     text = q.optString("text", ""),
                     confidence = q.optDouble("confidence", 0.85).toFloat(),
-                    optKeys = listOf("A", "B", "C", "D")
-                        .filter { optionsObj?.optString(it, "")?.isNotBlank() == true },
-                    optionsObj = optionsObj
+                    optKeys = listOf("A","B","C","D").filter { opts?.optString(it,"")?.isNotBlank() == true },
+                    optionsObj = opts
                 )
             }
 
-            // --- Pass 2: Anchor each question header to ML Kit position (X and Y) ---
+            // --- Pass A: Detect multi-column ---
+            val halfX = regionRect.left + regionRect.width() / 2
+            // Count ML Kit lines in each half of the page
+            val mlLeft  = mlKitLines.count { (it.boundingBox.left + it.boundingBox.right) / 2 < halfX }
+            val mlRight = mlKitLines.count { (it.boundingBox.left + it.boundingBox.right) / 2 >= halfX }
+            var isMultiColumn = expectedColumns >= 2 || (mlLeft >= 5 && mlRight >= 5)
+
+            // --- Pass B: Pre-assign columns by order; compute per-column virtual Y ---
+            // First half of questions → col 0, second half → col 1 (standard LGS layout)
+            val preColAssign: List<Int> = (0 until qCount).map { i ->
+                if (isMultiColumn && i >= qCount / 2) 1 else 0
+            }
+            // Per-column slice: in 2-col mode each col has ~qCount/2 questions
+            val questionsPerCol = if (isMultiColumn && qCount >= 2) maxOf(1, (qCount + 1) / 2) else qCount
+            val sliceHeight = regionRect.height() / questionsPerCol
+            val colQIdx = IntArray(2) { 0 }   // running question index within each column
+
+            // --- Pass C: Anchor to ML Kit positions ---
             data class HeaderPos(val top: Int, val left: Int, val right: Int, val anchored: Boolean)
-
-            val sliceHeight = regionRect.height() / qCount
             val headerPositions: List<HeaderPos> = qDataList.mapIndexed { i, qData ->
-                val virtualY = regionRect.top + i * sliceHeight
-                val defaultRect = Rect(regionRect.left, virtualY, regionRect.right, virtualY + VIRTUAL_LINE_HEIGHT_PX)
+                val preCIdx = preColAssign[i]
+                val virtualY = regionRect.top + colQIdx[preCIdx] * sliceHeight
+                colQIdx[preCIdx]++
 
-                // Try number prefix first ("4." anchor) then question text
+                val defaultRect = Rect(regionRect.left, virtualY, regionRect.right,
+                                       virtualY + VIRTUAL_LINE_HEIGHT_PX)
                 val numMatch = findMatchingRect("${qData.number}.", mlKitLines, defaultRect)
                 val resolved = if (numMatch !== defaultRect) numMatch
                                else findMatchingRect(qData.text, mlKitLines, defaultRect)
 
-                if (resolved !== defaultRect) {
+                if (resolved !== defaultRect)
                     HeaderPos(resolved.top, resolved.left, resolved.right, anchored = true)
-                } else {
+                else
                     HeaderPos(virtualY, regionRect.left, regionRect.right, anchored = false)
-                }
             }
 
-            // --- Pass 3: Group by column, build OcrLines, return per-column OcrResults ---
-            val halfX = regionRect.left + regionRect.width() / 2
-            // Multi-column if:
-            //  a) OpenCV explicitly detected ≥2 columns (reliable), OR
-            //  b) ML Kit anchored a header in the right half of the page
-            val isMultiColumn = expectedColumns >= 2 ||
-                headerPositions.any { it.anchored && it.left > halfX }
+            // Promote to multi-column if any anchored header is in the right half
+            if (!isMultiColumn && headerPositions.any { it.anchored && it.left > halfX })
+                isMultiColumn = true
 
-            // Assign each question to a column
+            // --- Pass D: Final column assignment, OcrLine construction ---
             val questionCols: List<Int> = headerPositions.mapIndexed { i, pos ->
                 when {
-                    !isMultiColumn -> 0
-                    pos.anchored -> if (pos.left > halfX) 1 else 0
-                    // Not anchored: first half of questions → col 0, rest → col 1
-                    else -> if (i < qCount / 2) 0 else 1
+                    pos.anchored && pos.left > halfX -> 1
+                    pos.anchored                     -> 0
+                    isMultiColumn                    -> preColAssign[i]
+                    else                             -> 0
                 }
             }
 
-            // Group question indices by column, sort by header Y within each column
-            data class QEntry(val origIdx: Int, val qData: QData, val pos: HeaderPos)
-            val columnGroups: Map<Int, List<QEntry>> = qDataList.indices
-                .map { i -> QEntry(i, qDataList[i], headerPositions[i]) }
-                .groupBy { questionCols[it.origIdx] }
-                .mapValues { (_, entries) -> entries.sortedBy { it.pos.top } }
+            data class QEntry(val qData: QData, val pos: HeaderPos)
+            val colGroups: Map<Int, List<QEntry>> = qDataList.indices
+                .groupBy { i -> questionCols[i] }
+                .mapValues { (_, idxList) ->
+                    idxList.map { i -> QEntry(qDataList[i], headerPositions[i]) }
+                           .sortedBy { it.pos.top }
+                }
 
-            // Build an OcrResult for each column
             val results = mutableListOf<OcrResult>()
-
-            for ((col, entries) in columnGroups.entries.sortedBy { it.key }) {
+            for ((col, entries) in colGroups.entries.sortedBy { it.key }) {
                 val lines = mutableListOf<OcrLine>()
-                val fullTextParts = mutableListOf<String>()
+                val textParts = mutableListOf<String>()
 
-                // X extent for this column
                 val colLeft  = if (!isMultiColumn || col == 0) regionRect.left else halfX
-                val colRight = if (!isMultiColumn || col == columnGroups.size - 1) regionRect.right else halfX
+                val colRight = if (!isMultiColumn || col == colGroups.size - 1) regionRect.right else halfX
 
-                entries.forEachIndexed { colQIdx, entry ->
-                    val qTop = entry.pos.top
-                    // Bottom = next question's top - 1; last question extends to column bottom
-                    val nextTop = entries.getOrNull(colQIdx + 1)?.pos?.top
-                    val qBottom = if (nextTop != null) (nextTop - 1) else regionRect.bottom
+                entries.forEachIndexed { colQIdx2, entry ->
+                    val qTop    = entry.pos.top
+                    val nextTop = entries.getOrNull(colQIdx2 + 1)?.pos?.top
+                    val qBottom = if (nextTop != null) nextTop - 1 else regionRect.bottom
                     val safeBottom = maxOf(qBottom, qTop + VIRTUAL_LINE_HEIGHT_PX)
 
-                    // X from anchored ML Kit position (or column default)
                     val qLeft  = if (entry.pos.anchored) entry.pos.left  else colLeft
                     val qRight = if (entry.pos.anchored) entry.pos.right else colRight
 
@@ -346,25 +356,17 @@ class ClaudeVisionDetector @Inject constructor(
                     val lineH = ((safeBottom - qTop) / linesInQ).coerceAtLeast(VIRTUAL_LINE_HEIGHT_PX)
 
                     val header = "${entry.qData.number}. ${entry.qData.text}"
-                    fullTextParts.add(header)
-                    lines.add(OcrLine(
-                        text = header,
-                        boundingBox = Rect(qLeft, qTop, qRight, qTop + lineH),
-                        confidence = entry.qData.confidence,
-                        lineIndex = lines.size
-                    ))
+                    textParts.add(header)
+                    lines.add(OcrLine(header, Rect(qLeft, qTop, qRight, qTop + lineH),
+                                      entry.qData.confidence, lines.size))
 
                     var optY = qTop + lineH
                     entry.qData.optionsObj?.let { opts ->
                         for (optKey in entry.qData.optKeys) {
                             val optLine = "$optKey) ${opts.optString(optKey, "")}"
-                            fullTextParts.add(optLine)
-                            lines.add(OcrLine(
-                                text = optLine,
-                                boundingBox = Rect(qLeft, optY, qRight, optY + lineH),
-                                confidence = entry.qData.confidence,
-                                lineIndex = lines.size
-                            ))
+                            textParts.add(optLine)
+                            lines.add(OcrLine(optLine, Rect(qLeft, optY, qRight, optY + lineH),
+                                              entry.qData.confidence, lines.size))
                             optY += lineH
                         }
                     }
@@ -372,7 +374,7 @@ class ClaudeVisionDetector @Inject constructor(
 
                 if (lines.isNotEmpty()) {
                     results.add(OcrResult(
-                        fullText = fullTextParts.joinToString("\n"),
+                        fullText = textParts.joinToString("\n"),
                         textLines = lines,
                         columnIndex = col,
                         regionRect = Rect(colLeft, regionRect.top, colRight, regionRect.bottom)
