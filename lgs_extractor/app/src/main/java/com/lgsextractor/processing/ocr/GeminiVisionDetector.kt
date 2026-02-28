@@ -181,21 +181,33 @@ class GeminiVisionDetector @Inject constructor(
     }
 
     private fun parseApiResponse(bodyStr: String, columnIndex: Int, regionRect: Rect, mlKitLines: List<OcrLine>): List<OcrResult> {
-        return try {
+        try {
             val root = JSONObject(bodyStr)
-            val candidates = root.optJSONArray("candidates") ?: return emptyList()
-            if (candidates.length() == 0) return emptyList()
+            val candidates = root.optJSONArray("candidates") 
+                ?: throw Exception("Gemini API yanıtında 'candidates' dizisi bulunamadı. Yanıt: ${bodyStr.take(100)}")
             
-            val content = candidates.getJSONObject(0).optJSONObject("content") ?: return emptyList()
-            val parts = content.optJSONArray("parts") ?: return emptyList()
-            if (parts.length() == 0) return emptyList()
+            if (candidates.length() == 0) throw Exception("Gemini API boş 'candidates' döndürdü.")
+            
+            val content = candidates.getJSONObject(0).optJSONObject("content") 
+                ?: throw Exception("Aday yanıtında 'content' objesi yok.")
+            
+            val parts = content.optJSONArray("parts") 
+                ?: throw Exception("Content içinde 'parts' dizisi yok.")
+                
+            if (parts.length() == 0) throw Exception("Parts dizisi boş.")
             
             val textContent = parts.getJSONObject(0).optString("text", "")
 
             // Extract JSON from the response text
             val jsonStart = textContent.indexOf('{')
             val jsonEnd = textContent.lastIndexOf('}')
-            if (jsonStart < 0 || jsonEnd < 0) return emptyList()
+            if (jsonStart < 0 || jsonEnd < 0) {
+                if (textContent.isBlank()) {
+                    throw Exception("Gemini API boş metin döndürdü (Muhtemelen güvenlik takıntısı).")
+                } else {
+                    throw Exception("Gemini JSON döndürmedi. Yanıt modeli: ${textContent.take(150)}")
+                }
+            }
 
             val jsonStr = textContent.substring(jsonStart, jsonEnd + 1)
             val parsed = JSONObject(jsonStr)
@@ -253,7 +265,7 @@ class GeminiVisionDetector @Inject constructor(
 
             if (lines.isEmpty()) return emptyList()
 
-            listOf(OcrResult(
+            return listOf(OcrResult(
                 fullText = fullTextParts.joinToString("\n"),
                 textLines = lines,
                 columnIndex = columnIndex,
@@ -261,7 +273,7 @@ class GeminiVisionDetector @Inject constructor(
             ))
         } catch (e: Exception) {
             logToFile("Parse Error: ${e.message}\n${e.stackTraceToString()}")
-            emptyList()
+            throw e
         }
     }
 
