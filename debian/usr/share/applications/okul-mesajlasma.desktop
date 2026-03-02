@@ -4,7 +4,7 @@ Name=Okul Mesajlasma Sistemi
 Name[tr]=Okul Mesajlasma Sistemi
 Comment=WiFi tabanli okul ici mesajlasma sistemi
 Comment[tr]=WiFi tabanli okul ici mesajlasma sistemi
-Exec=env GDK_BACKEND=x11 /usr/share/okul-mesajlasma/okul_mesajlasma
+Exec=env GDK_BACKEND=x11 /usr/share/okul-mesajlasma/launch.sh
 Icon=okul-mesajlasma
 Terminal=false
 Categories=Education;Network;

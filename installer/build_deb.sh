@@ -43,6 +43,10 @@ cp debian/etc/xdg/autostart/okul-mesajlasma.desktop \
 cp debian/etc/polkit-1/localauthority/50-local.d/okul-mesajlasma-shutdown.pkla \
    "${DEB_DIR}/etc/polkit-1/localauthority/50-local.d/"
 
+# Launcher script kopyala
+cp debian/usr/share/okul-mesajlasma/launch.sh "${DEB_DIR}/usr/share/${APP_NAME}/"
+chmod +x "${DEB_DIR}/usr/share/${APP_NAME}/launch.sh"
+
 # Symlink olustur
 ln -sf "/usr/share/${APP_NAME}/okul_mesajlasma" "${DEB_DIR}/usr/bin/${APP_NAME}"
 

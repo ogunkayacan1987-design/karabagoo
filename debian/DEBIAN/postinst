@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+# Eksik bagimliliklari otomatik kur
+if command -v apt-get &>/dev/null; then
+    apt-get install -f -y 2>/dev/null || true
+fi
+
 # Desktop veritabanini guncelle
 if command -v update-desktop-database &>/dev/null; then
     update-desktop-database -q /usr/share/applications/ 2>/dev/null || true
@@ -13,5 +18,6 @@ fi
 
 # Calistirilabilir yap
 chmod +x /usr/share/okul-mesajlasma/okul_mesajlasma
+chmod +x /usr/share/okul-mesajlasma/launch.sh
 
 echo "Okul Mesajlasma Sistemi basariyla kuruldu."
